@@ -53,6 +53,10 @@ HTML_TEMPLATE = '''
             background: linear-gradient(45deg, var(--light-green), var(--accent-green));
             -webkit-background-clip: text; -webkit-text-fill-color: transparent;
         }
+        .subtitle {
+            font-size: 1.2rem; color: var(--text-muted);
+            margin-bottom: 20px;
+        }
         .main-content {
             display: grid; grid-template-columns: 1fr 2fr;
             gap: 25px; margin-bottom: 30px;
@@ -67,6 +71,7 @@ HTML_TEMPLATE = '''
         .role-title {
             font-size: 1.5rem; margin-bottom: 20px;
             color: var(--light-green);
+            display: flex; align-items: center; gap: 10px;
         }
         .role-presets {
             display: grid; grid-template-columns: 1fr;
@@ -110,6 +115,22 @@ HTML_TEMPLATE = '''
         .chat-header {
             margin-bottom: 20px; padding-bottom: 15px;
             border-bottom: 1px solid var(--border-color);
+            display: flex; align-items: center; justify-content: space-between;
+        }
+        .chat-header h3 {
+            font-size: 1.5rem; color: var(--light-green);
+            display: flex; align-items: center; gap: 10px;
+        }
+        .clear-chat-btn {
+            background: rgba(139, 0, 0, 0.2);
+            color: #ff6b6b; border: 1px solid #ff6b6b;
+            padding: 8px 15px; border-radius: 8px;
+            cursor: pointer; font-size: 0.9rem;
+            transition: all 0.3s ease;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .clear-chat-btn:hover {
+            background: rgba(139, 0, 0, 0.4);
         }
         .chat-messages {
             flex: 1; overflow-y: auto; margin-bottom: 20px;
@@ -132,6 +153,17 @@ HTML_TEMPLATE = '''
             border: 1px solid var(--border-color);
             margin-right: auto; border-bottom-left-radius: 5px;
         }
+        .message-header {
+            display: flex; align-items: center;
+            gap: 10px; margin-bottom: 8px; font-weight: bold;
+        }
+        .message-content {
+            line-height: 1.5;
+        }
+        .message-time {
+            font-size: 0.8rem; color: var(--text-muted);
+            text-align: right; margin-top: 5px;
+        }
         .chat-input-area {
             display: flex; gap: 10px; padding-top: 15px;
             border-top: 1px solid var(--border-color);
@@ -141,19 +173,55 @@ HTML_TEMPLATE = '''
             border: 1px solid var(--border-color); border-radius: 10px;
             color: var(--text-light); font-size: 1rem;
         }
+        #messageInput:focus {
+            outline: none; border-color: var(--accent-green);
+        }
         #sendButton {
             background: linear-gradient(135deg, var(--accent-green), var(--light-green));
             color: #0d3b0d; border: none; padding: 0 25px;
             border-radius: 10px; cursor: pointer; font-weight: bold;
-            min-width: 100px;
+            display: flex; align-items: center; gap: 8px;
+            min-width: 100px; justify-content: center;
+        }
+        #sendButton:hover {
+            transform: translateY(-2px);
+        }
+        #sendButton:disabled {
+            opacity: 0.6; cursor: not-allowed; transform: none;
         }
         .typing-indicator {
             display: none; padding: 15px; color: var(--text-muted);
-            font-style: italic;
+            font-style: italic; align-items: center; gap: 10px;
+        }
+        .typing-dots {
+            display: flex; gap: 5px;
+        }
+        .typing-dots span {
+            width: 8px; height: 8px; background: var(--accent-green);
+            border-radius: 50%; animation: typing 1.4s infinite;
+        }
+        .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes typing {
+            0%, 60%, 100% { transform: translateY(0); }
+            30% { transform: translateY(-10px); }
         }
         .footer {
             text-align: center; padding: 20px; color: var(--text-muted);
             border-top: 1px solid var(--border-color); margin-top: 20px;
+        }
+        .role-description {
+            margin-top: 15px; padding: 15px;
+            background: rgba(0, 0, 0, 0.2); border-radius: 10px;
+            border-left: 4px solid var(--accent-green);
+            font-size: 0.9rem; color: var(--text-muted);
+        }
+        .scrollbar::-webkit-scrollbar { width: 8px; }
+        .scrollbar::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.2); border-radius: 4px;
+        }
+        .scrollbar::-webkit-scrollbar-thumb {
+            background: var(--secondary-green); border-radius: 4px;
         }
     </style>
 </head>
@@ -185,7 +253,8 @@ HTML_TEMPLATE = '''
                 </div>
 
                 <div class="role-description" id="roleDescription">
-                    <strong>Текущая роль:</strong> Помощник
+                    <strong>Текущая роль:</strong> Помощник<br>
+                    Вы - полезный AI-ассистент. Помогайте с вопросами.
                 </div>
 
                 <div class="custom-role">
@@ -205,7 +274,7 @@ HTML_TEMPLATE = '''
                     </button>
                 </div>
 
-                <div class="chat-messages" id="chatMessages">
+                <div class="chat-messages scrollbar" id="chatMessages">
                     <div class="message ai-message">
                         <div class="message-header">
                             <i class="fas fa-robot"></i> Mateus AI
@@ -239,6 +308,9 @@ HTML_TEMPLATE = '''
     </div>
 
     <script>
+        // ДЕБАГ: Проверяем загрузку скрипта
+        console.log('Mateus AI script loaded');
+        
         let currentRole = 'assistant';
         let conversationHistory = [];
         
@@ -257,27 +329,9 @@ HTML_TEMPLATE = '''
             'custom': 'Своя роль'
         };
 
-        // Инициализация при загрузке
-        document.addEventListener('DOMContentLoaded', function() {
-            // Назначаем обработчики кнопкам ролей
-            document.querySelectorAll('.role-btn').forEach(btn => {
-                btn.addEventListener('click', function() {
-                    const role = this.getAttribute('data-role');
-                    selectRole(role);
-                });
-            });
-            
-            // Обработчики других кнопок
-            document.getElementById('applyCustomRole').addEventListener('click', applyCustomRole);
-            document.getElementById('clearChat').addEventListener('click', clearChat);
-            document.getElementById('sendButton').addEventListener('click', sendMessage);
-            document.getElementById('messageInput').addEventListener('keypress', handleKeyPress);
-            
-            // Выбираем роль по умолчанию
-            selectRole('assistant');
-        });
-
+        // Функция выбора роли
         function selectRole(role) {
+            console.log('Selecting role:', role);
             currentRole = role;
             
             // Обновление кнопок
@@ -299,6 +353,7 @@ HTML_TEMPLATE = '''
         }
 
         function applyCustomRole() {
+            console.log('Applying custom role');
             const customRoleText = document.getElementById('customRoleText').value.trim();
             if (!customRoleText) {
                 alert('Опишите роль');
@@ -323,6 +378,7 @@ HTML_TEMPLATE = '''
         }
 
         function applyRole(roleType, roleDescription) {
+            console.log('Applying role to server:', roleType);
             fetch('/set_role', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -333,13 +389,18 @@ HTML_TEMPLATE = '''
             })
             .then(response => response.json())
             .then(data => {
+                console.log('Server response:', data);
                 if (data.success) {
                     addMessage('system', `Роль изменена на: ${roleDisplayNames[roleType] || 'Своя'}`);
                 }
+            })
+            .catch(error => {
+                console.error('Error applying role:', error);
             });
         }
 
         function addMessage(sender, text) {
+            console.log('Adding message:', sender, text.substring(0, 50));
             const chatMessages = document.getElementById('chatMessages');
             const messageDiv = document.createElement('div');
             const timestamp = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
@@ -379,15 +440,19 @@ HTML_TEMPLATE = '''
         }
 
         function sendMessage() {
+            console.log('Sending message');
             const input = document.getElementById('messageInput');
             const message = input.value.trim();
             
-            if (!message) return;
+            if (!message) {
+                console.log('Empty message, skipping');
+                return;
+            }
             
             addMessage('user', message);
             input.value = '';
             
-            document.getElementById('typingIndicator').style.display = 'block';
+            document.getElementById('typingIndicator').style.display = 'flex';
             document.getElementById('sendButton').disabled = true;
             
             fetch('/chat', {
@@ -397,24 +462,33 @@ HTML_TEMPLATE = '''
             })
             .then(response => response.json())
             .then(data => {
+                console.log('Chat response:', data);
                 document.getElementById('typingIndicator').style.display = 'none';
                 document.getElementById('sendButton').disabled = false;
                 
                 if (data.success) {
                     addMessage('ai', data.response);
                 } else {
-                    addMessage('ai', 'Ошибка');
+                    addMessage('ai', 'Ошибка при получении ответа');
                 }
+            })
+            .catch(error => {
+                console.error('Error sending message:', error);
+                document.getElementById('typingIndicator').style.display = 'none';
+                document.getElementById('sendButton').disabled = false;
+                addMessage('ai', 'Ошибка соединения');
             });
         }
 
         function handleKeyPress(event) {
             if (event.key === 'Enter') {
+                event.preventDefault();
                 sendMessage();
             }
         }
 
         function clearChat() {
+            console.log('Clearing chat');
             if (confirm('Очистить чат?')) {
                 document.getElementById('chatMessages').innerHTML = `
                     <div class="message ai-message">
@@ -430,6 +504,33 @@ HTML_TEMPLATE = '''
                 fetch('/clear_chat', {method: 'POST'});
             }
         }
+
+        // Инициализация при загрузке
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM loaded, initializing...');
+            
+            // Назначаем обработчики кнопкам ролей
+            document.querySelectorAll('.role-btn').forEach(btn => {
+                console.log('Adding listener to role button:', btn.getAttribute('data-role'));
+                btn.addEventListener('click', function() {
+                    const role = this.getAttribute('data-role');
+                    console.log('Role button clicked:', role);
+                    selectRole(role);
+                });
+            });
+            
+            // Обработчики других кнопок
+            document.getElementById('applyCustomRole').addEventListener('click', applyCustomRole);
+            document.getElementById('clearChat').addEventListener('click', clearChat);
+            document.getElementById('sendButton').addEventListener('click', sendMessage);
+            document.getElementById('messageInput').addEventListener('keypress', handleKeyPress);
+            
+            // Выбираем роль по умолчанию
+            console.log('Selecting default role...');
+            selectRole('assistant');
+            
+            console.log('Initialization complete');
+        });
     </script>
 </body>
 </html>
@@ -463,7 +564,7 @@ def set_role():
     session_id = session.get('session_id')
     
     if not session_id:
-        return jsonify({'success': False})
+        return jsonify({'success': False, 'error': 'No session'})
     
     role_type = data.get('role_type', 'assistant')
     role_description = data.get('role_description', '')
@@ -473,7 +574,7 @@ def set_role():
     else:
         session_roles[session_id] = role_description
     
-    return jsonify({'success': True})
+    return jsonify({'success': True, 'role': role_type})
 
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -481,12 +582,12 @@ def chat():
     session_id = session.get('session_id')
     
     if not session_id:
-        return jsonify({'success': False})
+        return jsonify({'success': False, 'error': 'No session'})
     
     user_message = data.get('message', '')
     
     if not user_message:
-        return jsonify({'success': False})
+        return jsonify({'success': False, 'error': 'Empty message'})
     
     current_role = session_roles.get(session_id, DEFAULT_ROLES['assistant'])
     
@@ -508,7 +609,7 @@ def chat():
     
     except Exception as e:
         print(f"Error: {e}")
-        return jsonify({'success': True, 'response': 'Ответ от AI'})
+        return jsonify({'success': False, 'error': str(e), 'response': 'Ошибка при обработке запроса'})
 
 @app.route('/clear_chat', methods=['POST'])
 def clear_chat():
@@ -519,9 +620,14 @@ def clear_chat():
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'healthy'})
+    return jsonify({'status': 'healthy', 'service': 'Mateus AI'})
+
+@app.route('/test')
+def test():
+    return jsonify({'message': 'Test endpoint works!'})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 3498))
     print(f"Starting Mateus AI on port {port}")
+    print(f"API Key: {'✓ Set' if openai.api_key else '✗ Not set'}")
     app.run(host='0.0.0.0', port=port, debug=False)
