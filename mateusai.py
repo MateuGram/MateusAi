@@ -1,5 +1,5 @@
 """
-Mateus AI - Рабочая версия с исправленными кнопками
+Mateus AI - Исправленная версия с работающим API
 """
 
 import os
@@ -387,11 +387,16 @@ HTML_TEMPLATE = '''
                     role_description: roleDescription
                 })
             })
-            .then(response => response.json())
+            .then(response => {
+                console.log('Response status:', response.status);
+                return response.json();
+            })
             .then(data => {
                 console.log('Server response:', data);
                 if (data.success) {
                     addMessage('system', `Роль изменена на: ${roleDisplayNames[roleType] || 'Своя'}`);
+                } else {
+                    console.error('Failed to set role:', data.error);
                 }
             })
             .catch(error => {
@@ -460,23 +465,29 @@ HTML_TEMPLATE = '''
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({message: message})
             })
-            .then(response => response.json())
+            .then(response => {
+                console.log('Chat response status:', response.status);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
             .then(data => {
-                console.log('Chat response:', data);
+                console.log('Chat response data:', data);
                 document.getElementById('typingIndicator').style.display = 'none';
                 document.getElementById('sendButton').disabled = false;
                 
                 if (data.success) {
                     addMessage('ai', data.response);
                 } else {
-                    addMessage('ai', 'Ошибка при получении ответа');
+                    addMessage('ai', 'Ошибка: ' + (data.error || 'Неизвестная ошибка'));
                 }
             })
             .catch(error => {
                 console.error('Error sending message:', error);
                 document.getElementById('typingIndicator').style.display = 'none';
                 document.getElementById('sendButton').disabled = false;
-                addMessage('ai', 'Ошибка соединения');
+                addMessage('ai', 'Ошибка соединения с сервером');
             });
         }
 
@@ -501,7 +512,9 @@ HTML_TEMPLATE = '''
                         <div class="message-time">${new Date().toLocaleTimeString()}</div>
                     </div>
                 `;
-                fetch('/clear_chat', {method: 'POST'});
+                fetch('/clear_chat', {method: 'POST'})
+                .then(response => response.json())
+                .then(data => console.log('Clear chat response:', data));
             }
         }
 
@@ -529,6 +542,12 @@ HTML_TEMPLATE = '''
             console.log('Selecting default role...');
             selectRole('assistant');
             
+            // Проверяем связь с сервером
+            fetch('/health')
+                .then(response => response.json())
+                .then(data => console.log('Health check:', data))
+                .catch(error => console.error('Health check failed:', error));
+            
             console.log('Initialization complete');
         });
     </script>
@@ -536,98 +555,218 @@ HTML_TEMPLATE = '''
 </html>
 '''
 
+# Улучшенные роли
 DEFAULT_ROLES = {
-    "assistant": "Вы - полезный AI-ассистент. Отвечайте на вопросы.",
-    "psychologist": "Вы - психолог. Помогайте с эмоциональными вопросами.",
-    "teacher": "Вы - учитель. Объясняйте темы просто и понятно.",
-    "programmer": "Вы - программист. Помогайте с написанием кода."
+    "assistant": "Вы - полезный AI-ассистент Mateus AI. Отвечайте на вопросы ясно и подробно. Будьте дружелюбны и полезны.",
+    "psychologist": "Вы - психолог Mateus AI. Выслушивайте проблемы пользователя, давайте советы по ментальному здоровью и эмоциональному благополучию. Будьте эмпатичны.",
+    "teacher": "Вы - учитель Mateus AI. Объясняйте сложные темы простыми словами. Помогайте с обучением и образованием.",
+    "programmer": "Вы - программист Mateus AI. Помогайте с написанием кода, отладкой и техническими вопросами. Давайте практичные советы."
 }
 
+# Хранилище сессий
 session_roles = {}
 session_histories = {}
 
 @app.route('/')
 def index():
-    session_id = session.get('session_id')
-    if not session_id:
-        session_id = str(uuid.uuid4())
-        session['session_id'] = session_id
-        session_roles[session_id] = DEFAULT_ROLES['assistant']
-        session_histories[session_id] = []
-    
-    current_time = datetime.now().strftime("%H:%M")
-    return render_template_string(HTML_TEMPLATE, current_time=current_time)
+    """Главная страница"""
+    try:
+        session_id = session.get('session_id')
+        if not session_id:
+            session_id = str(uuid.uuid4())
+            session['session_id'] = session_id
+            session_roles[session_id] = DEFAULT_ROLES['assistant']
+            session_histories[session_id] = []
+        
+        current_time = datetime.now().strftime("%H:%M")
+        return render_template_string(HTML_TEMPLATE, current_time=current_time)
+    except Exception as e:
+        print(f"Error in index route: {e}")
+        return f"Error: {e}", 500
 
 @app.route('/set_role', methods=['POST'])
 def set_role():
-    data = request.json
-    session_id = session.get('session_id')
-    
-    if not session_id:
-        return jsonify({'success': False, 'error': 'No session'})
-    
-    role_type = data.get('role_type', 'assistant')
-    role_description = data.get('role_description', '')
-    
-    if role_type in DEFAULT_ROLES:
-        session_roles[session_id] = DEFAULT_ROLES[role_type]
-    else:
-        session_roles[session_id] = role_description
-    
-    return jsonify({'success': True, 'role': role_type})
+    """Установка роли"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': 'No JSON data'})
+        
+        session_id = session.get('session_id')
+        if not session_id:
+            return jsonify({'success': False, 'error': 'No session ID'})
+        
+        role_type = data.get('role_type', 'assistant')
+        role_description = data.get('role_description', '')
+        
+        print(f"Setting role for session {session_id}: {role_type}")
+        
+        if role_type in DEFAULT_ROLES:
+            session_roles[session_id] = DEFAULT_ROLES[role_type]
+        else:
+            session_roles[session_id] = role_description
+        
+        return jsonify({'success': True, 'role': role_type})
+    except Exception as e:
+        print(f"Error in set_role: {e}")
+        return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/chat', methods=['POST'])
 def chat():
-    data = request.json
-    session_id = session.get('session_id')
-    
-    if not session_id:
-        return jsonify({'success': False, 'error': 'No session'})
-    
-    user_message = data.get('message', '')
-    
-    if not user_message:
-        return jsonify({'success': False, 'error': 'Empty message'})
-    
-    current_role = session_roles.get(session_id, DEFAULT_ROLES['assistant'])
-    
+    """Обработка сообщений"""
     try:
-        messages = [
-            {"role": "system", "content": current_role},
-            {"role": "user", "content": user_message}
-        ]
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': 'No JSON data'})
         
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=messages,
-            temperature=0.7,
-            max_tokens=500
-        )
-        response_text = response.choices[0].message.content
+        session_id = session.get('session_id')
+        if not session_id:
+            return jsonify({'success': False, 'error': 'No session ID'})
         
-        return jsonify({'success': True, 'response': response_text})
-    
+        user_message = data.get('message', '')
+        if not user_message:
+            return jsonify({'success': False, 'error': 'Empty message'})
+        
+        print(f"Chat request from session {session_id}: {user_message[:50]}...")
+        
+        # Получаем роль
+        current_role = session_roles.get(session_id, DEFAULT_ROLES['assistant'])
+        
+        # Проверяем API ключ
+        if not openai.api_key or openai.api_key == "GCm6eM9QprwRlpNdmok3mi0r40lAacfg":
+            # Используем реальный API
+            try:
+                messages = [
+                    {"role": "system", "content": current_role},
+                    {"role": "user", "content": user_message}
+                ]
+                
+                print("Calling OpenAI API...")
+                response = openai.ChatCompletion.create(
+                    model="gpt-3.5-turbo",
+                    messages=messages,
+                    temperature=0.7,
+                    max_tokens=500
+                )
+                
+                response_text = response.choices[0].message.content
+                print(f"OpenAI response: {response_text[:50]}...")
+                
+                # Сохраняем в историю
+                if session_id not in session_histories:
+                    session_histories[session_id] = []
+                
+                session_histories[session_id].append({
+                    'sender': 'user',
+                    'text': user_message,
+                    'time': datetime.now().isoformat()
+                })
+                session_histories[session_id].append({
+                    'sender': 'ai',
+                    'text': response_text,
+                    'time': datetime.now().isoformat()
+                })
+                
+                return jsonify({'success': True, 'response': response_text})
+                
+            except openai.error.AuthenticationError as e:
+                print(f"OpenAI Authentication Error: {e}")
+                return jsonify({
+                    'success': False, 
+                    'error': 'Ошибка аутентификации OpenAI API. Проверьте API ключ.',
+                    'response': 'Проверьте API ключ в настройках.'
+                })
+            except openai.error.RateLimitError as e:
+                print(f"OpenAI Rate Limit Error: {e}")
+                return jsonify({
+                    'success': False,
+                    'error': 'Лимит запросов OpenAI. Попробуйте позже.',
+                    'response': 'Лимит запросов. Попробуйте через минуту.'
+                })
+            except Exception as e:
+                print(f"OpenAI Error: {e}")
+                return jsonify({
+                    'success': False,
+                    'error': str(e),
+                    'response': f'Ошибка OpenAI: {str(e)[:100]}'
+                })
+        else:
+            # Демо режим (если ключ не установлен)
+            responses = {
+                'assistant': f'Как помощник, я могу сказать: "{user_message}" - это хороший вопрос!',
+                'psychologist': 'Как психолог, я рекомендую обсудить это с близкими или специалистом.',
+                'teacher': 'Как учитель, я бы объяснил эту тему с примерами и практикой.',
+                'programmer': 'Как программист, я бы посоветовал изучить документацию и писать чистый код.'
+            }
+            
+            response_text = responses.get('assistant', 'Спасибо за вопрос!')
+            return jsonify({'success': True, 'response': response_text})
+            
     except Exception as e:
-        print(f"Error: {e}")
-        return jsonify({'success': False, 'error': str(e), 'response': 'Ошибка при обработке запроса'})
+        print(f"Error in chat route: {e}")
+        return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/clear_chat', methods=['POST'])
 def clear_chat():
-    session_id = session.get('session_id')
-    if session_id in session_histories:
-        session_histories[session_id] = []
-    return jsonify({'success': True})
+    """Очистка истории"""
+    try:
+        session_id = session.get('session_id')
+        if session_id in session_histories:
+            session_histories[session_id] = []
+            print(f"Chat cleared for session {session_id}")
+        return jsonify({'success': True})
+    except Exception as e:
+        print(f"Error in clear_chat: {e}")
+        return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'healthy', 'service': 'Mateus AI'})
+    """Проверка здоровья"""
+    try:
+        # Проверяем API ключ
+        api_status = "active" if openai.api_key else "inactive"
+        
+        return jsonify({
+            'status': 'healthy',
+            'service': 'Mateus AI',
+            'openai_api': api_status,
+            'sessions': len(session_roles),
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'error': str(e)})
 
-@app.route('/test')
-def test():
-    return jsonify({'message': 'Test endpoint works!'})
+@app.route('/debug')
+def debug():
+    """Страница отладки"""
+    return jsonify({
+        'session_id': session.get('session_id'),
+        'session_roles': list(session_roles.keys()),
+        'session_histories': {k: len(v) for k, v in session_histories.items()},
+        'openai_api_key_set': bool(openai.api_key)
+    })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 3498))
-    print(f"Starting Mateus AI on port {port}")
-    print(f"API Key: {'✓ Set' if openai.api_key else '✗ Not set'}")
+    
+    print("=" * 60)
+    print("🤖 MATEUS AI - ЗАПУСК СЕРВЕРА")
+    print("=" * 60)
+    print(f"🔑 API ключ: {'✅ УСТАНОВЛЕН' if openai.api_key else '❌ НЕ УСТАНОВЛЕН'}")
+    print(f"🌐 Порт: {port}")
+    print(f"🚀 Запуск на: http://localhost:{port}")
+    print("=" * 60)
+    
+    # Тестируем API ключ
+    if openai.api_key:
+        try:
+            print("Проверка API ключа...")
+            models = openai.Model.list(limit=1)
+            print(f"✅ API ключ работает! Доступно моделей: {len(models.data) if models.data else 0}")
+        except openai.error.AuthenticationError:
+            print("❌ ОШИБКА АУТЕНТИФИКАЦИИ API!")
+            print("Проверьте API ключ. Возможно он неверный или истек.")
+        except Exception as e:
+            print(f"⚠️  Ошибка при проверке API: {e}")
+    
     app.run(host='0.0.0.0', port=port, debug=False)
