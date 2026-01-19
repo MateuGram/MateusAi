@@ -549,22 +549,22 @@ HTML_TEMPLATE = '''
                 <h3 class="role-title"><i class="fas fa-mask"></i>Выбор роли AI</h3>
                 
                 <div class="role-presets">
-                    <button class="role-btn" onclick="selectRole('assistant')">
+                    <button class="role-btn" onclick="selectRole('assistant')" id="role-assistant">
                         <i class="fas fa-robot"></i>Умный помощник
                     </button>
-                    <button class="role-btn" onclick="selectRole('psychologist')">
+                    <button class="role-btn" onclick="selectRole('psychologist')" id="role-psychologist">
                         <i class="fas fa-heart"></i>Психолог-эксперт
                     </button>
-                    <button class="role-btn" onclick="selectRole('teacher')">
+                    <button class="role-btn" onclick="selectRole('teacher')" id="role-teacher">
                         <i class="fas fa-graduation-cap"></i>Профессор
                     </button>
-                    <button class="role-btn" onclick="selectRole('programmer')">
+                    <button class="role-btn" onclick="selectRole('programmer')" id="role-programmer">
                         <i class="fas fa-code"></i>Сеньор-разработчик
                     </button>
-                    <button class="role-btn" onclick="selectRole('scientist')">
+                    <button class="role-btn" onclick="selectRole('scientist')" id="role-scientist">
                         <i class="fas fa-flask"></i>Учёный
                     </button>
-                    <button class="role-btn" onclick="selectRole('creative')">
+                    <button class="role-btn" onclick="selectRole('creative')" id="role-creative">
                         <i class="fas fa-palette"></i>Креативный директор
                     </button>
                 </div>
@@ -657,6 +657,7 @@ HTML_TEMPLATE = '''
             'custom': 'Экспертная роль'
         };
 
+        // ФИКС: Правильная функция selectRole
         function selectRole(role) {
             currentRole = role;
             
@@ -664,7 +665,12 @@ HTML_TEMPLATE = '''
             document.querySelectorAll('.role-btn').forEach(btn => {
                 btn.classList.remove('active');
             });
-            event.currentTarget.classList.add('active');
+            
+            // Активируем выбранную кнопку
+            const selectedBtn = document.getElementById(`role-${role}`);
+            if (selectedBtn) {
+                selectedBtn.classList.add('active');
+            }
             
             // Обновление описания
             document.getElementById('roleDescription').innerHTML = `
@@ -862,6 +868,7 @@ HTML_TEMPLATE = '''
 
         // Инициализация - выбираем умного помощника по умолчанию
         document.addEventListener('DOMContentLoaded', function() {
+            // Активируем кнопку помощника
             selectRole('assistant');
             
             // Проверка связи с сервером
