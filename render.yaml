@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: mateus-ai
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python mateusai.py
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: PORT
+        value: 10000
