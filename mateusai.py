@@ -11,8 +11,6 @@ from flask import Flask, render_template_string, request, jsonify, session, redi
 import openai
 from openai import OpenAI
 from dotenv import load_dotenv
-import requests
-from urllib.parse import urlencode
 
 load_dotenv()
 
@@ -42,36 +40,15 @@ PRO_PRICE = 1000
 # Пароль админа
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "Admin123")
 
-# DonationAlerts
-DONATION_ALERTS = {
-    'client_id': os.environ.get('DA_CLIENT_ID', ''),
-    'client_secret': os.environ.get('DA_CLIENT_SECRET', ''),
-    'redirect_uri': os.environ.get('DA_REDIRECT_URI', ''),
-    'api_url': 'https://www.donationalerts.com/api/v1',
-    'auth_url': 'https://www.donationalerts.com/oauth/authorize',
-    'token_url': 'https://www.donationalerts.com/oauth/token'
-}
-
 # ==================== ХРАНЕНИЕ ДАННЫХ ====================
 
-# Временное хранилище в памяти (на Render нужно использовать базу данных)
-class MemoryStorage:
-    def __init__(self):
-        self.users = {}
-        self.settings = {
-            'donation_alerts': {'connected': False, 'access_token': '', 'refresh_token': ''},
-            'pro_codes': {}
-        }
-        self.donations = {}
-    
-    def save_all(self):
-        """На Render здесь нужно сохранять в базу данных"""
-        return True
-
-storage = MemoryStorage()
-users_db = storage.users
-settings_db = storage.settings
-donations_db = storage.donations
+# Временное хранилище в памяти
+users_db = {}
+settings_db = {
+    'donation_alerts': {'connected': False, 'access_token': '', 'refresh_token': ''},
+    'pro_codes': {}
+}
+donations_db = {}
 
 # ==================== HTML ШАБЛОНЫ ====================
 
@@ -580,9 +557,27 @@ def chat():
             return jsonify({'success': False, 'error': 'Сообщение не может быть пустым'})
         
         if not client:
+            # Fallback ответ если OpenAI не настроен
+            increment_request(user_id)
+            _, new_limit, new_used, new_remaining = check_request_limit(user_id)
+            
+            fallback_responses = [
+                f"Вы спросили: '{message}'. К сожалению, AI сервис временно недоступен. Пожалуйста, настройте OpenAI API ключ для полного функционала.",
+                f"Вопрос: '{message}'. Для ответа на этот вопрос необходим доступ к AI сервису. Установите переменную OPENAI_API_KEY.",
+                f"Спасибо за вопрос! Вы использовали {new_used} из {new_limit} запросов на сегодня."
+            ]
+            
+            import random
+            response = random.choice(fallback_responses)
+            
             return jsonify({
-                'success': False,
-                'error': 'AI сервис временно недоступен. Пожалуйста, попробуйте позже или свяжитесь с администратором.'
+                'success': True,
+                'response': response,
+                'usage': {
+                    'used': new_used,
+                    'limit': new_limit,
+                    'remaining': new_remaining
+                }
             })
         
         role = session.get('current_role', 'assistant')
@@ -638,6 +633,20 @@ def activate_pro():
             return jsonify({'success': False, 'message': 'Введите код активации'})
         
         user_id = get_user_id()
+        
+        # Создаем тестовый код если нет кодов
+        if not settings_db.get('pro_codes'):
+            test_code = "PRO-TEST123"
+            settings_db['pro_codes'] = {
+                test_code: {
+                    'created': datetime.now().isoformat(),
+                    'expires': (datetime.now() + timedelta(days=365)).isoformat(),
+                    'used': False,
+                    'days': 30,
+                    'price': PRO_PRICE,
+                    'note': 'Тестовый код'
+                }
+            }
         
         if code in settings_db.get('pro_codes', {}):
             pro_data = settings_db['pro_codes'][code]
@@ -700,19 +709,21 @@ def donation_info():
         </div>
         
         <div class="alert" style="margin-bottom: 25px;">
-            <h3><i class="fas fa-qrcode"></i> Как получить?</h3>
-            <ol style="margin: 15px 0 15px 25px; line-height: 1.8;">
-                <li><strong>Сделайте донат {PRO_PRICE} рублей</strong> через DonationAlerts</li>
-                <li>В комментарии укажите ваш ID: <code style="background: rgba(0,0,0,0.3); padding: 3px 8px; border-radius: 4px;">{user_id}</code></li>
-                <li>После проверки (до 24 часов) вам будет выдан PRO код</li>
-                <li>Введите код на главной странице</li>
-                <li>Наслаждайтесь PRO возможностями!</li>
-            </ol>
+            <h3><i class="fas fa-qrcode"></i> Как получить PRO код?</h3>
+            <div style="margin: 15px 0;">
+                <p><strong>Способ 1:</strong> В админ-панели создайте PRO код</p>
+                <p><strong>Способ 2:</strong> Сделайте донат {PRO_PRICE} рублей</p>
+                <p><strong>Способ 3:</strong> Используйте тестовый код: <code>PRO-TEST123</code></p>
+            </div>
+            <p>Ваш ID для донатов: <code>{user_id}</code></p>
         </div>
         
         <div style="text-align: center;">
             <a href="/" class="btn btn-primary" style="padding: 15px 30px;">
                 <i class="fas fa-arrow-left"></i> На главную
+            </a>
+            <a href="/admin" class="btn" style="padding: 15px 30px; margin-left: 10px;">
+                <i class="fas fa-cog"></i> Админ-панель
             </a>
         </div>
     </div>
@@ -745,6 +756,10 @@ def admin():
                     <i class="fas fa-sign-in-alt"></i> Войти
                 </button>
             </form>
+            <p style="margin-top: 20px; color: #a3d9a3; font-size: 0.9rem;">
+                По умолчанию: Admin123<br>
+                Установите ADMIN_PASSWORD для безопасности
+            </p>
         </div>
         '''
     
@@ -767,18 +782,21 @@ def admin():
             .stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin: 30px 0; }}
             .stat {{ background: #162416; padding: 20px; border-radius: 10px; text-align: center; }}
             .stat-value {{ font-size: 2.5rem; font-weight: bold; color: #32cd32; }}
-            table {{ width: 100%; border-collapse: collapse; background: #162416; border-radius: 10px; overflow: hidden; }}
+            table {{ width: 100%; border-collapse: collapse; background: #162416; border-radius: 10px; overflow: hidden; margin: 20px 0; }}
             th, td {{ padding: 15px; text-align: left; border-bottom: 1px solid #2a5c2a; }}
             th {{ background: #2a5c2a; }}
             .btn {{ background: #32cd32; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin: 5px; }}
             .btn-danger {{ background: #ff6b6b; }}
+            .btn-warning {{ background: #ffaa00; color: #333; }}
+            form {{ margin: 20px 0; padding: 20px; background: #162416; border-radius: 10px; }}
+            input, select {{ padding: 10px; margin: 5px; border-radius: 5px; border: 1px solid #2a5c2a; background: rgba(255,255,255,0.1); color: white; }}
         </style>
     </head>
     <body>
         <div class="container">
             <div class="header">
                 <h1><i class="fas fa-cogs"></i> Админ-панель Mateus AI</h1>
-                <p><a href="/" style="color: #90ee90;">← На главную</a></p>
+                <p><a href="/" style="color: #90ee90;">← На главную</a> | Работает на Render.com</p>
             </div>
             
             <div class="stats">
@@ -800,53 +818,89 @@ def admin():
                 </div>
             </div>
             
-            <h2>Создать PRO код</h2>
-            <form method="POST" action="/admin/create_code" style="margin: 20px 0;">
-                <input type="number" name="days" value="30" style="padding: 10px; margin-right: 10px;">
-                <input type="text" name="note" placeholder="Примечание" style="padding: 10px; margin-right: 10px;">
-                <button type="submit" class="btn">Создать код</button>
+            <h2><i class="fas fa-ticket-alt"></i> Создать PRO код</h2>
+            <form action="/admin/create_code" method="POST">
+                <input type="hidden" name="password" value="{ADMIN_PASSWORD}">
+                <div>
+                    <label>Дней действия:</label>
+                    <input type="number" name="days" value="30" min="1" max="365">
+                </div>
+                <div>
+                    <label>Примечание:</label>
+                    <input type="text" name="note" placeholder="Например: Тестовый код" style="width: 300px;">
+                </div>
+                <div>
+                    <label>Тип кода:</label>
+                    <select name="code_type">
+                        <option value="pro">PRO подписка</option>
+                        <option value="test">Тестовый</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn">
+                    <i class="fas fa-plus"></i> Создать код
+                </button>
             </form>
             
-            <h2>Пользователи ({len(users_db)})</h2>
+            <h2><i class="fas fa-users"></i> Пользователи ({len(users_db)})</h2>
             <table>
                 <tr>
                     <th>ID</th>
                     <th>PRO</th>
                     <th>Запросы</th>
+                    <th>Создан</th>
                     <th>Действия</th>
                 </tr>
                 {''.join([f'''
                 <tr>
-                    <td>{uid[:12]}...</td>
+                    <td><small>{uid[:12]}...</small></td>
                     <td>{"✅" if user.get('is_pro') else "❌"}</td>
                     <td>{user.get('requests_today', 0)}/{user.get('limit', FREE_LIMIT)}</td>
+                    <td>{user.get('created', '')[:10] if user.get('created') else '-'}</td>
                     <td>
                         <button class="btn" onclick="togglePro('{uid}')">
                             {"❌ Снять PRO" if user.get('is_pro') else "✅ Дать PRO"}
                         </button>
                     </td>
                 </tr>
-                ''' for uid, user in list(users_db.items())[:50]])}
+                ''' for uid, user in list(users_db.items())[:30]])}
             </table>
             
-            <h2>PRO коды</h2>
+            <h2><i class="fas fa-key"></i> PRO коды</h2>
             <table>
-                <tr><th>Код</th><th>Срок</th><th>Статус</th><th>Примечание</th></tr>
+                <tr><th>Код</th><th>Срок</th><th>Статус</th><th>Примечание</th><th>Действия</th></tr>
                 {''.join([f'''
                 <tr>
                     <td><code>{code}</code></td>
                     <td>{data.get('expires', '')[0:10] if data.get('expires') else '∞'}</td>
                     <td>{"✅ Использован" if data.get('used') else "🟢 Активен"}</td>
                     <td>{data.get('note', '')}</td>
+                    <td>
+                        {'' if data.get('used') else f'<button class="btn-danger" onclick="deleteCode(\'{code}\')">Удалить</button>'}
+                    </td>
                 </tr>
                 ''' for code, data in list(settings_db.get('pro_codes', {}).items())[:20]])}
             </table>
+            
+            <div style="margin-top: 40px; padding: 20px; background: #162416; border-radius: 10px;">
+                <h3><i class="fas fa-info-circle"></i> Информация о системе</h3>
+                <p><strong>OpenAI API:</strong> {'✅ Настроен' if client else '❌ Не настроен (используйте OPENAI_API_KEY)'}</p>
+                <p><strong>Текущее время:</strong> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
+                <p><strong>Статус:</strong> ✅ Работает на Render.com</p>
+                <p><strong>Порт:</strong> {os.environ.get('PORT', '10000')}</p>
+            </div>
         </div>
         
         <script>
             function togglePro(userId) {{
-                if (confirm('Изменить PRO статус?')) {{
-                    fetch(`/admin/toggle_pro/${{userId}}?password={password}`, {{method: 'POST'}})
+                if (confirm('Изменить PRO статус пользователя?')) {{
+                    fetch(`/admin/toggle_pro/${{userId}}?password={ADMIN_PASSWORD}`, {{method: 'POST'}})
+                        .then(() => location.reload());
+                }}
+            }}
+            
+            function deleteCode(code) {{
+                if (confirm('Удалить этот код?')) {{
+                    fetch(`/admin/delete_code/${{code}}?password={ADMIN_PASSWORD}`, {{method: 'DELETE'}})
                         .then(() => location.reload());
                 }}
             }}
@@ -876,10 +930,8 @@ def admin_toggle_pro(user_id):
 def create_pro_code():
     days = int(request.form.get('days', 30))
     note = request.form.get('note', '')
-    password = request.args.get('password')
-    
-    if not password:
-        password = request.form.get('password')
+    password = request.form.get('password')
+    code_type = request.form.get('code_type', 'pro')
     
     if password != ADMIN_PASSWORD:
         return redirect('/admin?password=' + ADMIN_PASSWORD)
@@ -890,10 +942,22 @@ def create_pro_code():
         'expires': (datetime.now() + timedelta(days=days)).isoformat(),
         'used': False,
         'note': note,
-        'price': PRO_PRICE
+        'price': PRO_PRICE if code_type == 'pro' else 0,
+        'type': code_type
     }
     
-    return redirect(f'/admin?password={ADMIN_PASSWORD}&message=Код создан: {code}')
+    return redirect(f'/admin?password={ADMIN_PASSWORD}')
+
+@app.route('/admin/delete_code/<code>', methods=['DELETE'])
+def delete_pro_code(code):
+    password = request.args.get('password')
+    if password != ADMIN_PASSWORD:
+        return jsonify({'success': False})
+    
+    if code in settings_db.get('pro_codes', {}):
+        del settings_db['pro_codes'][code]
+    
+    return jsonify({'success': True})
 
 @app.route('/health')
 def health():
@@ -903,28 +967,11 @@ def health():
         'timestamp': datetime.now().isoformat(),
         'users': len(users_db),
         'openai_configured': bool(client),
-        'deploy_platform': 'Render.com'
+        'deploy_platform': 'Render.com',
+        'version': '2.0'
     })
 
 # ==================== ЗАПУСК СЕРВЕРА ====================
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 10000))
-    
-    print("=" * 70)
-    print("🚀 MATEUS AI - ЗАПУСК НА RENDER.COM")
-    print("=" * 70)
-    print(f"🌐 Порт: {port}")
-    print(f"🔑 OpenAI: {'✅ Настроен' if client else '⚠️ Не настроен (используйте OPENAI_API_KEY)'}")
-    print(f"🔐 Админ пароль: {ADMIN_PASSWORD}")
-    print(f"💰 PRO: {PRO_PRICE} руб. ({PRO_LIMIT} запросов/день)")
-    print(f"🎯 Free: {FREE_LIMIT} запросов/день")
-    print("=" * 70)
-    print("🚀 Запуск сервера...")
-    print("=" * 70)
-    
-    app.run(
-        host='0.0.0.0',
-        port=port,
-        debug=False
-    )
+# Удаляем блок if __name__ == '__main__' для Render
+# На Render приложение запускается через gunicorn
