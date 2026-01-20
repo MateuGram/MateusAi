@@ -1,5 +1,5 @@
 """
-Mateus AI - Полная версия с реальным OpenAI AI (API v1.3.0)
+Mateus AI - Рабочая версия с OpenAI API 0.28.1 (стабильная)
 """
 
 import os
@@ -13,7 +13,7 @@ app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
 # ==================== КОНФИГУРАЦИЯ ====================
 
-# НАСТРОЙКА OPENAI С ВАШИМ КЛЮЧОМ
+# НАСТРОЙКА OPENAI
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "sk-4d3a66a7465c4e82b6af708cd646e6ba")
 
 # Лимиты
@@ -301,7 +301,7 @@ def check_request_limit(user_id):
     return used < limit, limit, used, remaining
 
 def get_ai_response(user_id, message, role='assistant'):
-    """РЕАЛЬНЫЙ ОТВЕТ ОТ OPENAI GPT-3.5-TURBO"""
+    """РЕАЛЬНЫЙ ОТВЕТ ОТ OPENAI GPT-3.5-TURBO (СТАБИЛЬНАЯ ВЕРСИЯ)"""
     
     # Проверяем ключ
     if not OPENAI_API_KEY:
@@ -357,21 +357,18 @@ def get_ai_response(user_id, message, role='assistant'):
     messages.append({"role": "user", "content": message})
     
     try:
-        # НОВАЯ ВЕРСИЯ OPENAI API (1.3.0)
-        from openai import OpenAI
+        # ПРОБУЕМ СТАБИЛЬНУЮ ВЕРСИЮ OPENAI
+        import openai
         
-        # Инициализируем клиент с вашим ключом
-        client = OpenAI(api_key=OPENAI_API_KEY)
+        # Устанавливаем ключ
+        openai.api_key = OPENAI_API_KEY
         
-        # ВЫЗОВ РЕАЛЬНОГО OPENAI API
-        response = client.chat.completions.create(
+        # ВЫЗОВ РЕАЛЬНОГО OPENAI API (старая стабильная версия)
+        response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=messages,
             temperature=0.7,
-            max_tokens=1500,
-            top_p=1,
-            frequency_penalty=0,
-            presence_penalty=0.6
+            max_tokens=1000
         )
         
         ai_response = response.choices[0].message.content
@@ -387,55 +384,31 @@ def get_ai_response(user_id, message, role='assistant'):
         return ai_response
         
     except ImportError:
-        # Если старая версия openai
-        try:
-            import openai
-            openai.api_key = OPENAI_API_KEY
-            
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=messages,
-                temperature=0.7,
-                max_tokens=1500
-            )
-            
-            ai_response = response.choices[0].message.content
-            
-            # Сохраняем в историю
-            users_db[user_id]['chat_history'].append({"role": "user", "content": message})
-            users_db[user_id]['chat_history'].append({"role": "assistant", "content": ai_response})
-            
-            return ai_response
-            
-        except Exception as e:
-            return f"❌ **Ошибка старого API**: {str(e)[:200]}"
+        return "❌ **Библиотека OpenAI не установлена.**\n\nУстановите: pip install openai==0.28.1"
     
-    except Exception as e:
-        error_msg = str(e).lower()
+    except openai.error.AuthenticationError:
+        return """🔑 **Ошибка аутентификации OpenAI API**
         
-        if "authentication" in error_msg or "invalid api key" in error_msg:
-            return """🔑 **Ошибка аутентификации OpenAI API**
-            
+Ваш ключ: `{}...`
+
 Проверьте:
 1. Правильность API ключа в настройках Render
 2. Что ключ имеет доступ к GPT-3.5 Turbo
-3. Баланс на аккаунте OpenAI"""
+3. Баланс на аккаунте OpenAI""".format(OPENAI_API_KEY[:10])
+    
+    except openai.error.RateLimitError:
+        return """⏳ **Превышен лимит запросов или закончились средства**
         
-        elif "rate limit" in error_msg or "quota" in error_msg:
-            return """⏳ **Превышен лимит запросов или закончились средства**
-            
 Проверьте баланс на platform.openai.com"""
+    
+    except openai.error.APIError as e:
+        return f"⚠️ **Ошибка API OpenAI**: {str(e)[:200]}"
+    
+    except Exception as e:
+        return f"""❌ **Ошибка соединения с AI**
         
-        elif "billing" in error_msg:
-            return """💳 **Требуется пополнение счета**
-            
-Перейдите на platform.openai.com для пополнения баланса"""
-        
-        else:
-            return f"""⚠️ **Ошибка соединения с AI**
-            
 Детали: {str(e)[:200]}
-            
+        
 Пожалуйста, попробуйте еще раз через минуту."""
 
 # ==================== МАРШРУТЫ ====================
@@ -465,7 +438,7 @@ def index():
         </div>
         
         <div style="margin-top: 15px; font-size: 0.9rem; color: #90ee90;">
-            <i class="fas fa-bolt"></i> Работает на OpenAI GPT-3.5 Turbo | API v1.3.0
+            <i class="fas fa-bolt"></i> Работает на OpenAI GPT-3.5 Turbo | API v0.28.1
         </div>
     </div>
     '''
@@ -588,7 +561,7 @@ def index():
             Работает на Render.com | Free: ''' + str(FREE_LIMIT) + '''/день | PRO: ''' + str(PRO_LIMIT) + '''/день
         </p>
         <p style="margin-top: 5px; font-size: 0.75rem; opacity: 0.6;">
-            <i class="fas fa-bolt"></i> OpenAI API v1.3.0 | GPT-3.5 Turbo | Контекстная память
+            <i class="fas fa-bolt"></i> OpenAI API v0.28.1 | GPT-3.5 Turbo | Контекстная память
         </p>
     </div>
     '''
@@ -899,11 +872,11 @@ def health():
         'status': 'healthy',
         'service': 'Mateus AI',
         'ai': 'OpenAI GPT-3.5 Turbo',
-        'api_version': '1.3.0',
+        'api_version': '0.28.1',
         'timestamp': datetime.now().isoformat(),
         'users': len(users_db),
         'openai_configured': bool(OPENAI_API_KEY),
-        'version': '3.1',
+        'version': '3.2',
         'features': ['real_ai', 'chat_history', 'pro_system', 'role_system', 'markdown']
     })
 
@@ -911,9 +884,9 @@ def health():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
-    print(f"🚀 Запуск Mateus AI v3.1 на порту {port}")
+    print(f"🚀 Запуск Mateus AI v3.2 на порту {port}")
     print(f"🧠 Реальный AI: OpenAI GPT-3.5 Turbo")
-    print(f"🔑 OpenAI API v1.3.0: {'✅ Настроен' if OPENAI_API_KEY else '❌ Не настроен'}")
+    print(f"🔑 OpenAI API v0.28.1: {'✅ Настроен' if OPENAI_API_KEY else '❌ Не настроен'}")
     print(f"💰 PRO система: активна ({PRO_LIMIT} запросов/день)")
     print(f"💬 Контекстная память: 6 сообщений")
     app.run(host='0.0.0.0', port=port, debug=False)
