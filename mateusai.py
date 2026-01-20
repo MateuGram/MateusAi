@@ -1,5 +1,5 @@
 """
-Mateus AI - Рабочая версия для Render.com
+Mateus AI - Полная версия с реальным OpenAI AI (API v1.3.0)
 """
 
 import os
@@ -12,6 +12,9 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
 # ==================== КОНФИГУРАЦИЯ ====================
+
+# НАСТРОЙКА OPENAI С ВАШИМ КЛЮЧОМ
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "sk-4d3a66a7465c4e82b6af708cd646e6ba")
 
 # Лимиты
 FREE_LIMIT = 10
@@ -102,6 +105,39 @@ BASE_HTML = '''<!DOCTYPE html>
             text-align: center; padding: 30px; color: var(--muted);
             border-top: 1px solid var(--border); margin-top: 40px; 
         }
+        .loader {
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top: 3px solid var(--accent);
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-right: 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .ai-response {
+            line-height: 1.6;
+        }
+        .ai-response h3, .ai-response h4 {
+            color: var(--accent);
+            margin: 15px 0 10px 0;
+        }
+        .ai-response ul, .ai-response ol {
+            margin: 10px 0 10px 20px;
+        }
+        .ai-response li {
+            margin-bottom: 8px;
+        }
+        .ai-response code {
+            background: rgba(0,0,0,0.3);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+        }
     </style>
 </head>
 <body>
@@ -123,7 +159,7 @@ BASE_HTML = '''<!DOCTYPE html>
                 
                 const btn = document.querySelector('.chat-input .btn');
                 const originalText = btn.innerHTML;
-                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+                btn.innerHTML = '<span class="loader"></span> Отправка...';
                 btn.disabled = true;
                 
                 addMessage('user', message);
@@ -139,11 +175,11 @@ BASE_HTML = '''<!DOCTYPE html>
                     if (data.success) {
                         addMessage('ai', data.response);
                     } else {
-                        addMessage('ai', '<div style="color: var(--red);">' + data.error + '</div>');
+                        addMessage('ai', '<div style="color: var(--red); padding: 10px; background: rgba(255,107,107,0.1); border-radius: 8px;"><i class="fas fa-exclamation-circle"></i> ' + data.error + '</div>');
                     }
                 })
                 .catch(error => {
-                    addMessage('ai', '<div style="color: var(--red);">Ошибка сети</div>');
+                    addMessage('ai', '<div style="color: var(--red);"><i class="fas fa-exclamation-circle"></i> Ошибка сети</div>');
                 })
                 .finally(() => {
                     btn.innerHTML = originalText;
@@ -182,15 +218,41 @@ BASE_HTML = '''<!DOCTYPE html>
             
             const div = document.createElement('div');
             div.className = 'message ' + sender + '-message';
-            div.innerHTML = `
-                <div style="font-weight: bold; margin-bottom: 8px;">
-                    ${sender === 'user' ? '👤 Вы' : '🤖 Mateus AI'}
-                </div>
-                <div>${text}</div>
-            `;
+            if (sender === 'ai') {
+                div.innerHTML = `
+                    <div style="font-weight: bold; margin-bottom: 8px;">
+                        🤖 Mateus AI
+                    </div>
+                    <div class="ai-response">${text}</div>
+                `;
+            } else {
+                div.innerHTML = `
+                    <div style="font-weight: bold; margin-bottom: 8px;">
+                        👤 Вы
+                    </div>
+                    <div>${text}</div>
+                `;
+            }
             chat.appendChild(div);
             chat.scrollTop = chat.scrollHeight;
         }
+        
+        window.selectRole = function(role) {
+            fetch('/set_role', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({role: role})
+            })
+            .then(r => r.json())
+            .then(data => {
+                const roleNames = {
+                    'assistant': 'Ассистент',
+                    'programmer': 'Программист',
+                    'teacher': 'Учитель'
+                };
+                alert('🎭 Роль "' + roleNames[role] + '" выбрана!');
+            });
+        };
     </script>
 </body>
 </html>'''
@@ -218,7 +280,8 @@ def get_user_id():
             'requests_today': 0,
             'last_request': datetime.now().date().isoformat(),
             'is_pro': False,
-            'limit': FREE_LIMIT
+            'limit': FREE_LIMIT,
+            'chat_history': []
         }
     
     return user_id
@@ -237,6 +300,144 @@ def check_request_limit(user_id):
     
     return used < limit, limit, used, remaining
 
+def get_ai_response(user_id, message, role='assistant'):
+    """РЕАЛЬНЫЙ ОТВЕТ ОТ OPENAI GPT-3.5-TURBO"""
+    
+    # Проверяем ключ
+    if not OPENAI_API_KEY:
+        return "❌ **OpenAI API ключ не настроен.**\n\nДобавьте OPENAI_API_KEY в переменные окружения Render."
+    
+    # Системные промпты для разных ролей
+    system_prompts = {
+        'assistant': """Ты - Mateus AI, умный и полезный AI-ассистент. 
+Ты говоришь на русском языке. 
+Отвечай вежливо, информативно и по делу. 
+Используй эмодзи где уместно. 
+Форматируй ответы с помощью Markdown.
+Будь дружелюбным и готовым помочь с любыми вопросами.
+Отвечай полно и развернуто, но по существу.
+Всегда старайся давать максимально полезные и подробные ответы.
+Если вопрос сложный - разбивай ответ на логические части.
+Используй заголовки, списки и форматирование для лучшей читаемости.""",
+        
+        'programmer': """Ты - Mateus AI, эксперт по программированию.
+Ты говоришь на русском языке.
+Помогай с кодом на любых языках программирования.
+Объясняй концепции простыми словами.
+Предоставляй примеры кода и лучшие практики.
+Отвечай на вопросы об алгоритмах, структурах данных, фреймворках.
+Форматируй код с правильными отступами.
+Всегда проверяй код на наличие ошибок перед ответом.
+Давай подробные объяснения к коду.""",
+        
+        'teacher': """Ты - Mateus AI, опытный учитель и наставник.
+Ты говоришь на русском языке.
+Объясняй сложные темы простым и понятным языком.
+Используй аналогии и примеры из жизни.
+Поощряй любопытство и задавание вопросов.
+Разбивай сложные темы на простые шаги.
+Всегда проверяй, понятно ли объяснение.
+Задавай наводящие вопросы чтобы помочь понять тему."""
+    }
+    
+    # Получаем историю чата пользователя
+    user = users_db.get(user_id, {})
+    chat_history = user.get('chat_history', [])
+    
+    # Формируем сообщения для OpenAI
+    messages = [
+        {"role": "system", "content": system_prompts.get(role, system_prompts['assistant'])}
+    ]
+    
+    # Добавляем историю (последние 6 сообщений для контекста)
+    for hist_msg in chat_history[-6:]:
+        messages.append(hist_msg)
+    
+    # Добавляем текущее сообщение пользователя
+    messages.append({"role": "user", "content": message})
+    
+    try:
+        # НОВАЯ ВЕРСИЯ OPENAI API (1.3.0)
+        from openai import OpenAI
+        
+        # Инициализируем клиент с вашим ключом
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        
+        # ВЫЗОВ РЕАЛЬНОГО OPENAI API
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=messages,
+            temperature=0.7,
+            max_tokens=1500,
+            top_p=1,
+            frequency_penalty=0,
+            presence_penalty=0.6
+        )
+        
+        ai_response = response.choices[0].message.content
+        
+        # Сохраняем в историю
+        users_db[user_id]['chat_history'].append({"role": "user", "content": message})
+        users_db[user_id]['chat_history'].append({"role": "assistant", "content": ai_response})
+        
+        # Ограничиваем историю последними 12 сообщениями
+        if len(users_db[user_id]['chat_history']) > 12:
+            users_db[user_id]['chat_history'] = users_db[user_id]['chat_history'][-12:]
+        
+        return ai_response
+        
+    except ImportError:
+        # Если старая версия openai
+        try:
+            import openai
+            openai.api_key = OPENAI_API_KEY
+            
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=messages,
+                temperature=0.7,
+                max_tokens=1500
+            )
+            
+            ai_response = response.choices[0].message.content
+            
+            # Сохраняем в историю
+            users_db[user_id]['chat_history'].append({"role": "user", "content": message})
+            users_db[user_id]['chat_history'].append({"role": "assistant", "content": ai_response})
+            
+            return ai_response
+            
+        except Exception as e:
+            return f"❌ **Ошибка старого API**: {str(e)[:200]}"
+    
+    except Exception as e:
+        error_msg = str(e).lower()
+        
+        if "authentication" in error_msg or "invalid api key" in error_msg:
+            return """🔑 **Ошибка аутентификации OpenAI API**
+            
+Проверьте:
+1. Правильность API ключа в настройках Render
+2. Что ключ имеет доступ к GPT-3.5 Turbo
+3. Баланс на аккаунте OpenAI"""
+        
+        elif "rate limit" in error_msg or "quota" in error_msg:
+            return """⏳ **Превышен лимит запросов или закончились средства**
+            
+Проверьте баланс на platform.openai.com"""
+        
+        elif "billing" in error_msg:
+            return """💳 **Требуется пополнение счета**
+            
+Перейдите на platform.openai.com для пополнения баланса"""
+        
+        else:
+            return f"""⚠️ **Ошибка соединения с AI**
+            
+Детали: {str(e)[:200]}
+            
+Пожалуйста, попробуйте еще раз через минуту."""
+
 # ==================== МАРШРУТЫ ====================
 
 @app.route('/')
@@ -253,102 +454,151 @@ def index():
         </a>
         <div class="logo"><i class="fas fa-brain"></i></div>
         <h1 class="title">Mateus AI</h1>
-        <p>Интеллектуальный помощник нового поколения</p>
+        <p>Настоящий искусственный интеллект с GPT-3.5 Turbo</p>
         
         <div style="margin-top: 20px;">
             <span style="background: rgba(50,205,50,0.15); color: #32cd32; padding: 8px 16px; border-radius: 20px;">
                 <i class="fas fa-''' + ('rocket' if can_request else 'hourglass-end') + '''"></i>
                 ''' + str(used) + '''/''' + str(limit) + ''' запросов | Осталось: ''' + str(remaining) + '''
             </span>
-            ''' + ('<span style="background: gold; color: #333; padding: 4px 12px; border-radius: 20px; margin-left: 10px;">PRO</span>' if user.get('is_pro') else '') + '''
+            ''' + ('<span style="background: gold; color: #333; padding: 4px 12px; border-radius: 20px; margin-left: 10px; font-weight: bold;"><i class="fas fa-crown"></i> PRO</span>' if user.get('is_pro') else '') + '''
+        </div>
+        
+        <div style="margin-top: 15px; font-size: 0.9rem; color: #90ee90;">
+            <i class="fas fa-bolt"></i> Работает на OpenAI GPT-3.5 Turbo | API v1.3.0
         </div>
     </div>
     '''
     
     sidebar = '''
     <div class="card">
-        <h3><i class="fas fa-mask"></i> Роли AI</h3>
+        <h3><i class="fas fa-mask"></i> Режимы AI</h3>
+        <p style="color: #a3d9a3; margin-bottom: 15px; font-size: 0.9rem;">Выберите специализацию AI</p>
+        
         <div style="margin: 20px 0;">
-            <button class="btn" onclick="selectRole('assistant')" style="width: 100%; margin-bottom: 10px;">
-                <i class="fas fa-robot"></i> Помощник
+            <button class="btn" onclick="selectRole('assistant')" style="width: 100%; margin-bottom: 10px; text-align: left;">
+                <i class="fas fa-robot"></i> Универсальный помощник
             </button>
-            <button class="btn" onclick="selectRole('programmer')" style="width: 100%; margin-bottom: 10px;">
-                <i class="fas fa-code"></i> Программист
+            <button class="btn" onclick="selectRole('programmer')" style="width: 100%; margin-bottom: 10px; text-align: left;">
+                <i class="fas fa-code"></i> Программист & Разработчик
             </button>
-            <button class="btn" onclick="selectRole('teacher')" style="width: 100%; margin-bottom: 10px;">
-                <i class="fas fa-graduation-cap"></i> Учитель
+            <button class="btn" onclick="selectRole('teacher')" style="width: 100%; margin-bottom: 10px; text-align: left;">
+                <i class="fas fa-graduation-cap"></i> Учитель & Объяснятор
             </button>
         </div>
         
         <div style="background: rgba(151,117,250,0.1); padding: 20px; border-radius: 15px; border: 1px solid #9775fa;">
             <h4><i class="fas fa-crown"></i> PRO Подписка</h4>
-            <p>''' + str(PRO_PRICE) + ''' руб. / ''' + str(PRO_LIMIT) + ''' запросов в день</p>
+            <p style="color: #a3d9a3; margin: 10px 0;">''' + str(PRO_PRICE) + ''' руб. / 30 дней</p>
+            <p style="font-size: 0.9rem; color: #90ee90; margin-bottom: 15px;">
+                <i class="fas fa-bolt"></i> ''' + str(PRO_LIMIT) + ''' запросов в день
+            </p>
             <input type="text" id="proCode" placeholder="Введите PRO код" 
                    style="width: 100%; padding: 12px; margin: 10px 0; border-radius: 8px; border: 1px solid #2a5c2a; background: rgba(0,0,0,0.2); color: white;">
-            <button class="btn" onclick="activatePro()" style="width: 100%; background: gold; color: #333;">
+            <button class="btn" onclick="activatePro()" style="width: 100%; background: linear-gradient(135deg, gold, #ffcc00); color: #333; font-weight: bold;">
                 <i class="fas fa-bolt"></i> Активировать PRO
             </button>
-            <p style="text-align: center; margin-top: 10px;">
+            <p style="text-align: center; margin-top: 10px; font-size: 0.85rem;">
                 <a href="/donation_info" style="color: #9775fa; text-decoration: none;">
                     <i class="fas fa-donate"></i> Как получить код?
                 </a>
             </p>
         </div>
+        
+        <div style="margin-top: 20px; padding: 15px; background: rgba(50,205,50,0.05); border-radius: 10px; border: 1px solid #2a5c2a;">
+            <h4><i class="fas fa-info-circle"></i> О системе</h4>
+            <p style="font-size: 0.85rem; color: #a3d9a3; margin-top: 10px;">
+                • Реальный AI (OpenAI GPT-3.5)<br>
+                • Сохранение контекста разговора<br>
+                • Поддержка Markdown<br>
+                • 3 режима работы<br>
+                • Контекст: 6 сообщений
+            </p>
+        </div>
     </div>
-    
-    <script>
-        function selectRole(role) {
-            fetch('/set_role', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({role: role})
-            }).then(() => alert('Роль "' + role + '" выбрана'));
-        }
-    </script>
     '''
     
     content = '''
     <div class="card">
         <h3><i class="fas fa-comments"></i> Чат с Mateus AI</h3>
+        <p style="color: #a3d9a3; margin-bottom: 20px; font-size: 0.95rem;">
+            Задавайте любые вопросы! AI запоминает контекст разговора.
+        </p>
         
         <div id="chatMessages" class="chat-messages">
             <div class="ai-message">
                 <strong>🤖 Mateus AI</strong>
-                <div style="margin-top: 10px;">
-                    <p>Привет! Я ваш AI помощник Mateus.</p>
-                    <p>Я могу помочь с различными задачами:</p>
-                    <ul style="margin: 10px 0 10px 20px;">
-                        <li>Ответить на вопросы</li>
-                        <li>Помочь с программированием</li>
-                        <li>Объяснить сложные темы</li>
+                <div style="margin-top: 10px;" class="ai-response">
+                    <h3>👋 Привет! Я настоящий искусственный интеллект Mateus AI!</h3>
+                    
+                    <p>Я работаю на основе <strong>OpenAI GPT-3.5 Turbo</strong> и могу помочь вам с:</p>
+                    
+                    <ul>
+                        <li>💡 <strong>Ответами на любые вопросы</strong> (наука, техника, история, культура)</li>
+                        <li>💻 <strong>Помощью в программировании</strong> (Python, JavaScript, Java, C++ и другие)</li>
+                        <li>📚 <strong>Объяснением сложных тем</strong> простым языком</li>
+                        <li>✍️ <strong>Написанием текстов</strong> (статьи, письма, креативные идеи)</li>
+                        <li>🔍 <strong>Анализом информации</strong> и решением проблем</li>
                     </ul>
-                    <p>Выберите роль слева и задавайте вопросы!</p>
+                    
+                    <div style="background: rgba(50,205,50,0.1); padding: 15px; border-radius: 10px; margin: 20px 0; border-left: 4px solid #32cd32;">
+                        <p><strong>🎭 Выберите режим слева</strong> для лучших результатов:</p>
+                        <ul style="margin-top: 5px;">
+                            <li><strong>Помощник</strong> - общие вопросы и помощь</li>
+                            <li><strong>Программист</strong> - код и технологии</li>
+                            <li><strong>Учитель</strong> - обучение и объяснения</li>
+                        </ul>
+                    </div>
+                    
+                    <p><strong>Примеры вопросов:</strong></p>
+                    <ul>
+                        <li>"Объясни квантовую физику простыми словами"</li>
+                        <li>"Напиши код для сортировки массива на Python"</li>
+                        <li>"Что такое искусственный интеллект?"</li>
+                        <li>"Помоги написать письмо для работы"</li>
+                    </ul>
+                    
+                    <p>Просто напишите ваш вопрос ниже и нажмите Enter!</p>
                 </div>
             </div>
         </div>
         
         <div class="chat-input">
-            <input type="text" id="messageInput" placeholder="Введите ваш вопрос... (Enter для отправки)" autofocus>
-            <button class="btn" onclick="sendMessage()" style="background: #32cd32; color: #0d3b0d;">
+            <input type="text" id="messageInput" placeholder="Задайте ваш вопрос... (Enter для отправки)" autofocus>
+            <button class="btn" onclick="sendMessage()" style="background: linear-gradient(135deg, #32cd32, #2a8c2a); font-weight: bold;">
                 <i class="fas fa-paper-plane"></i> Отправить
             </button>
+        </div>
+        
+        <div style="margin-top: 15px; display: flex; justify-content: space-between; font-size: 0.85rem; color: #a3d9a3;">
+            <div>
+                <i class="fas fa-lightbulb"></i> <strong>Совет:</strong> Задавайте конкретные вопросы
+            </div>
+            <div>
+                <i class="fas fa-history"></i> Контекст: 6 сообщений
+            </div>
         </div>
     </div>
     '''
     
     footer = '''
     <div class="footer">
-        <p>© 2024 Mateus AI | Искусственный интеллект нового поколения</p>
-        <p>Работает на Render.com | Free: ''' + str(FREE_LIMIT) + '''/день | PRO: ''' + str(PRO_LIMIT) + '''/день</p>
+        <p>© 2024 Mateus AI | Реальный искусственный интеллект на OpenAI GPT-3.5 Turbo</p>
+        <p style="margin-top: 10px; font-size: 0.8rem; opacity: 0.8;">
+            Работает на Render.com | Free: ''' + str(FREE_LIMIT) + '''/день | PRO: ''' + str(PRO_LIMIT) + '''/день
+        </p>
+        <p style="margin-top: 5px; font-size: 0.75rem; opacity: 0.6;">
+            <i class="fas fa-bolt"></i> OpenAI API v1.3.0 | GPT-3.5 Turbo | Контекстная память
+        </p>
     </div>
     '''
     
-    return render_page('Mateus AI', header, sidebar, content, footer)
+    return render_page('Mateus AI | Real AI', header, sidebar, content, footer)
 
 @app.route('/set_role', methods=['POST'])
 def set_role():
     session['role'] = request.get_json().get('role', 'assistant')
-    return jsonify({'success': True})
+    return jsonify({'success': True, 'role': session['role']})
 
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -359,7 +609,7 @@ def chat():
         if not can_request:
             return jsonify({
                 'success': False,
-                'error': 'Лимит запросов исчерпан (' + str(used) + '/' + str(limit) + '). Купите PRO подписку!'
+                'error': f'🚫 Лимит запросов исчерпан ({used}/{limit}). Купите PRO подписку за {PRO_PRICE} рублей!'
             })
         
         data = request.get_json()
@@ -368,22 +618,21 @@ def chat():
         if not message:
             return jsonify({'success': False, 'error': 'Сообщение не может быть пустым'})
         
-        # Простой ответ для демонстрации
-        import random
-        responses = [
-            "Вы спросили: '" + message + "'. Это интересный вопрос! Mateus AI готов помочь вам.",
-            "Вопрос принят: '" + message[:50] + "...'. Я обрабатываю ваш запрос.",
-            "Спасибо за сообщение! Вы использовали " + str(used + 1) + " из " + str(limit) + " запросов на сегодня.",
-            "Отличный вопрос! Mateus AI анализирует информацию чтобы дать вам лучший ответ."
-        ]
+        if len(message) > 4000:
+            return jsonify({'success': False, 'error': 'Сообщение слишком длинное (макс. 4000 символов)'})
         
-        response = random.choice(responses)
+        # Получаем выбранную роль
+        role = session.get('role', 'assistant')
         
+        # ПОЛУЧАЕМ РЕАЛЬНЫЙ ОТВЕТ ОТ OPENAI
+        ai_response = get_ai_response(user_id, message, role)
+        
+        # Обновляем счетчик запросов
         users_db[user_id]['requests_today'] = used + 1
         
         return jsonify({
             'success': True,
-            'response': response,
+            'response': ai_response,
             'usage': {
                 'used': used + 1,
                 'limit': limit,
@@ -392,7 +641,7 @@ def chat():
         })
         
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        return jsonify({'success': False, 'error': f'Ошибка сервера: {str(e)}'})
 
 @app.route('/activate_pro', methods=['POST'])
 def activate_pro():
@@ -411,7 +660,7 @@ def activate_pro():
             users_db[user_id]['limit'] = PRO_LIMIT
             return jsonify({
                 'success': True,
-                'message': 'PRO подписка активирована на 30 дней!'
+                'message': '✅ PRO подписка активирована на 30 дней! Теперь у вас 1000 запросов в день.'
             })
         
         # Проверка кодов из settings
@@ -425,35 +674,58 @@ def activate_pro():
                 
                 return jsonify({
                     'success': True,
-                    'message': 'PRO подписка активирована!'
+                    'message': '✅ PRO подписка активирована! Теперь у вас 1000 запросов в день.'
                 })
         
-        return jsonify({'success': False, 'message': 'Неверный код'})
+        return jsonify({'success': False, 'message': '❌ Неверный или уже использованный код'})
     
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)})
+        return jsonify({'success': False, 'message': f'Ошибка: {str(e)}'})
 
 @app.route('/donation_info')
 def donation_info():
     return '''
-    <div style="max-width: 800px; margin: 0 auto; padding: 40px;">
+    <div style="max-width: 800px; margin: 40px auto; padding: 20px;">
         <div style="background: #162416; padding: 40px; border-radius: 20px; border: 2px solid #32cd32;">
-            <h1 style="color: #32cd32; text-align: center;">PRO Подписка Mateus AI</h1>
+            <h1 style="color: #32cd32; text-align: center;">
+                <i class="fas fa-crown"></i> PRO Подписка Mateus AI
+            </h1>
+            
             <div style="text-align: center; margin: 30px 0;">
-                <div style="font-size: 3rem; color: gold; font-weight: bold;">''' + str(PRO_PRICE) + ''' ₽</div>
-                <div style="color: #a3d9a3;">за 30 дней использования</div>
+                <div style="font-size: 3.5rem; color: gold; font-weight: bold; line-height: 1;">
+                    ''' + str(PRO_PRICE) + ''' ₽
+                </div>
+                <div style="color: #a3d9a3; margin-top: 10px;">
+                    за 30 дней использования реального AI
+                </div>
             </div>
-            <div style="background: rgba(50,205,50,0.1); padding: 20px; border-radius: 10px; margin: 20px 0;">
-                <h3 style="color: #32cd32;">Преимущества PRO:</h3>
-                <ul style="color: #f0fff0;">
-                    <li>''' + str(PRO_LIMIT) + ''' запросов в день (вместо ''' + str(FREE_LIMIT) + ''')</li>
-                    <li>Приоритетная обработка запросов</li>
-                    <li>Расширенный контекст разговора</li>
-                    <li>Все экспертные роли</li>
+            
+            <div style="background: rgba(50,205,50,0.1); padding: 25px; border-radius: 15px; margin: 25px 0; border: 1px solid #32cd32;">
+                <h3 style="color: #32cd32; margin-bottom: 20px;">
+                    <i class="fas fa-star"></i> Преимущества PRO:
+                </h3>
+                <ul style="color: #f0fff0; list-style: none; padding: 0;">
+                    <li style="padding: 12px 0; border-bottom: 1px solid rgba(50,205,50,0.2);">
+                        <i class="fas fa-check-circle" style="color: #32cd32; margin-right: 10px;"></i>
+                        <strong>''' + str(PRO_LIMIT) + ''' запросов в день</strong> (вместо ''' + str(FREE_LIMIT) + ''')
+                    </li>
+                    <li style="padding: 12px 0; border-bottom: 1px solid rgba(50,205,50,0.2);">
+                        <i class="fas fa-check-circle" style="color: #32cd32; margin-right: 10px;"></i>
+                        Приоритетная обработка запросов
+                    </li>
+                    <li style="padding: 12px 0; border-bottom: 1px solid rgba(50,205,50,0.2);">
+                        <i class="fas fa-check-circle" style="color: #32cd32; margin-right: 10px;"></i>
+                        Расширенный контекст разговора
+                    </li>
+                    <li style="padding: 12px 0;">
+                        <i class="fas fa-check-circle" style="color: #32cd32; margin-right: 10px;"></i>
+                        Доступ ко всем экспертным ролям
+                    </li>
                 </ul>
             </div>
+            
             <div style="text-align: center; margin-top: 40px;">
-                <a href="/" style="background: #32cd32; color: #0d3b0d; padding: 15px 30px; border-radius: 10px; text-decoration: none; font-weight: bold;">
+                <a href="/" style="background: #32cd32; color: #0d3b0d; padding: 15px 30px; border-radius: 10px; text-decoration: none; font-weight: bold; display: inline-block;">
                     <i class="fas fa-arrow-left"></i> На главную
                 </a>
             </div>
@@ -466,14 +738,14 @@ def admin():
     password = request.args.get('password')
     if password != ADMIN_PASSWORD:
         return '''
-        <div style="max-width: 400px; margin: 100px auto; padding: 40px; background: #162416; border-radius: 20px; text-align: center;">
-            <h2 style="color: #32cd32;">Админ-панель</h2>
+        <div style="max-width: 400px; margin: 100px auto; padding: 40px; background: #162416; border-radius: 20px; text-align: center; border: 2px solid #32cd32;">
+            <h2 style="color: #32cd32; margin-bottom: 30px;">Админ-панель</h2>
             <form method="GET">
                 <input type="password" name="password" placeholder="Пароль" 
-                       style="width: 100%; padding: 12px; margin: 20px 0; border-radius: 8px; border: 1px solid #2a5c2a; background: rgba(0,0,0,0.3); color: white;">
+                       style="width: 100%; padding: 15px; margin: 20px 0; border-radius: 10px; border: 1px solid #2a5c2a; background: rgba(0,0,0,0.3); color: white; font-size: 1rem;">
                 <button type="submit" 
-                        style="width: 100%; padding: 12px; background: #32cd32; border: none; border-radius: 8px; color: white;">
-                    Войти
+                        style="width: 100%; padding: 15px; background: #32cd32; border: none; border-radius: 10px; color: white; font-size: 1rem; font-weight: bold; cursor: pointer;">
+                    <i class="fas fa-sign-in-alt"></i> Войти
                 </button>
             </form>
         </div>
@@ -501,38 +773,97 @@ def admin():
                 <h3>💬 Запросы сегодня</h3>
                 <p style="font-size: 2.5rem;">''' + str(requests_today) + '''</p>
             </div>
+            <div style="background: #4dabf7; padding: 20px; border-radius: 10px; text-align: center;">
+                <h3>🤖 OpenAI</h3>
+                <p style="font-size: 2.5rem;">Активен</p>
+            </div>
         </div>
         
         <h2>Создать PRO код</h2>
         <form method="POST" action="/admin/create_code">
             <input type="hidden" name="password" value="''' + ADMIN_PASSWORD + '''">
-            <input type="number" name="days" value="30" style="padding: 10px; margin: 5px;">
-            <input type="text" name="note" placeholder="Примечание" style="padding: 10px; margin: 5px;">
-            <button type="submit" style="padding: 10px 20px; background: #32cd32; border: none; border-radius: 5px; color: white;">
-                Создать код
-            </button>
+            <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+                <input type="number" name="days" value="30" placeholder="Дней" 
+                       style="padding: 12px; border-radius: 8px; border: 1px solid #2a5c2a; background: rgba(0,0,0,0.3); color: white; width: 120px;">
+                <input type="text" name="note" placeholder="Примечание (необязательно)" 
+                       style="flex: 1; padding: 12px; border-radius: 8px; border: 1px solid #2a5c2a; background: rgba(0,0,0,0.3); color: white;">
+                <button type="submit" 
+                        style="padding: 12px 24px; background: #32cd32; border: none; border-radius: 8px; color: white; font-weight: bold; cursor: pointer;">
+                    <i class="fas fa-plus"></i> Создать код
+                </button>
+            </div>
         </form>
         
-        <h2>Пользователи</h2>
-        <table style="width: 100%; border-collapse: collapse; background: #162416; border-radius: 10px; overflow: hidden; margin: 20px 0;">
-            <tr style="background: #2a5c2a;">
-                <th style="padding: 15px;">ID</th>
-                <th style="padding: 15px;">PRO</th>
-                <th style="padding: 15px;">Запросы</th>
-            </tr>
+        <h2>Активные PRO коды</h2>
+        <div style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 10px; margin-bottom: 20px;">
+            <p style="color: #a3d9a3; margin-bottom: 10px;">Тестовый код: <code style="background: rgba(255,255,255,0.1); padding: 5px 10px; border-radius: 5px;">PRO-TEST123</code></p>
+        </div>
+        
+        <div style="overflow-x: auto;">
+            <table style="width: 100%; border-collapse: collapse; background: #162416; border-radius: 10px; overflow: hidden; margin: 20px 0;">
+                <tr style="background: #2a5c2a;">
+                    <th style="padding: 15px; text-align: left;">Код</th>
+                    <th style="padding: 15px; text-align: left;">Создан</th>
+                    <th style="padding: 15px; text-align: left;">Истекает</th>
+                    <th style="padding: 15px; text-align: left;">Использован</th>
+                    <th style="padding: 15px; text-align: left;">Примечание</th>
+                </tr>
     '''
     
-    for uid, user in list(users_db.items())[:20]:
+    for code, data in settings_db.get('pro_codes', {}).items():
         html += '''
-            <tr style="border-bottom: 1px solid #2a5c2a;">
-                <td style="padding: 12px;">''' + uid[:12] + '''...</td>
-                <td style="padding: 12px;">''' + ('✅' if user.get('is_pro') else '❌') + '''</td>
-                <td style="padding: 12px;">''' + str(user.get('requests_today', 0)) + '''</td>
-            </tr>
+                <tr style="border-bottom: 1px solid #2a5c2a;">
+                    <td style="padding: 12px;"><code>''' + code + '''</code></td>
+                    <td style="padding: 12px;">''' + data.get('created', '')[:10] + '''</td>
+                    <td style="padding: 12px;">''' + data.get('expires', '')[:10] + '''</td>
+                    <td style="padding: 12px;">''' + ('✅' if data.get('used') else '❌') + '''</td>
+                    <td style="padding: 12px;">''' + (data.get('note', '') or '-') + '''</td>
+                </tr>
         '''
     
     html += '''
-        </table>
+            </table>
+        </div>
+        
+        <h2>Пользователи (последние 20)</h2>
+        <div style="overflow-x: auto;">
+            <table style="width: 100%; border-collapse: collapse; background: #162416; border-radius: 10px; overflow: hidden; margin: 20px 0;">
+                <tr style="background: #2a5c2a;">
+                    <th style="padding: 15px; text-align: left;">ID</th>
+                    <th style="padding: 15px; text-align: left;">PRO</th>
+                    <th style="padding: 15px; text-align: left;">Запросы</th>
+                    <th style="padding: 15px; text-align: left;">История</th>
+                    <th style="padding: 15px; text-align: left;">Последний</th>
+                </tr>
+    '''
+    
+    for uid, user in list(users_db.items())[:20]:
+        history_len = len(user.get('chat_history', []))
+        last_request = user.get('last_request', '-')
+        
+        html += '''
+                <tr style="border-bottom: 1px solid #2a5c2a;">
+                    <td style="padding: 12px;"><code>''' + uid[:12] + '''...</code></td>
+                    <td style="padding: 12px;">''' + ('✅ PRO' if user.get('is_pro') else '❌ Free') + '''</td>
+                    <td style="padding: 12px;">''' + str(user.get('requests_today', 0)) + '''</td>
+                    <td style="padding: 12px;">''' + str(history_len // 2) + ''' диалогов</td>
+                    <td style="padding: 12px;">''' + str(last_request) + '''</td>
+                </tr>
+        '''
+    
+    html += '''
+            </table>
+        </div>
+        
+        <div style="margin-top: 30px; padding: 20px; background: rgba(50,205,50,0.1); border-radius: 10px;">
+            <h3 style="color: #32cd32;">Статус системы</h3>
+            <p style="color: #a3d9a3;">
+                <strong>OpenAI API:</strong> ''' + ('✅ Активен' if OPENAI_API_KEY else '❌ Не настроен') + '''<br>
+                <strong>Всего пользователей:</strong> ''' + str(users_total) + '''<br>
+                <strong>Запросов сегодня:</strong> ''' + str(requests_today) + '''<br>
+                <strong>PRO пользователей:</strong> ''' + str(pro_users) + ''' (''' + (str(round(pro_users/users_total*100, 1)) if users_total > 0 else '0') + '''%)
+            </p>
+        </div>
     </div>
     '''
     
@@ -542,9 +873,9 @@ def admin():
 def create_pro_code():
     password = request.form.get('password')
     if password != ADMIN_PASSWORD:
-        return "Ошибка доступа"
+        return "Ошибка доступа", 403
     
-    code = "PRO-" + secrets.token_hex(4).upper()
+    code = "PRO-" + secrets.token_hex(6).upper()
     days = int(request.form.get('days', 30))
     note = request.form.get('note', '')
     
@@ -555,22 +886,34 @@ def create_pro_code():
         'note': note
     }
     
-    return '<script>alert("Код создан: ' + code + '"); location.href="/admin?password=' + ADMIN_PASSWORD + '";</script>'
+    return f'''
+    <script>
+        alert("✅ PRO код создан:\\n{code}\\n\\nСкопируйте его: {code}");
+        location.href = "/admin?password={ADMIN_PASSWORD}";
+    </script>
+    '''
 
 @app.route('/health')
 def health():
     return jsonify({
         'status': 'healthy',
         'service': 'Mateus AI',
+        'ai': 'OpenAI GPT-3.5 Turbo',
+        'api_version': '1.3.0',
         'timestamp': datetime.now().isoformat(),
         'users': len(users_db),
-        'version': '2.0'
+        'openai_configured': bool(OPENAI_API_KEY),
+        'version': '3.1',
+        'features': ['real_ai', 'chat_history', 'pro_system', 'role_system', 'markdown']
     })
 
 # ==================== ЗАПУСК СЕРВЕРА ====================
 
 if __name__ == '__main__':
-    # Для локального тестирования
     port = int(os.environ.get('PORT', 10000))
-    print(f"🚀 Запуск Mateus AI на порту {port}")
+    print(f"🚀 Запуск Mateus AI v3.1 на порту {port}")
+    print(f"🧠 Реальный AI: OpenAI GPT-3.5 Turbo")
+    print(f"🔑 OpenAI API v1.3.0: {'✅ Настроен' if OPENAI_API_KEY else '❌ Не настроен'}")
+    print(f"💰 PRO система: активна ({PRO_LIMIT} запросов/день)")
+    print(f"💬 Контекстная память: 6 сообщений")
     app.run(host='0.0.0.0', port=port, debug=False)
