@@ -1,5 +1,5 @@
 """
-Mateus AI - Финальная рабочая версия с вашим новым ключом OpenAI
+Mateus AI - Полная версия с DeepSeek AI (ваш реальный провайдер)
 """
 
 import os
@@ -7,14 +7,15 @@ import uuid
 import secrets
 from datetime import datetime, timedelta
 from flask import Flask, render_template_string, request, jsonify, session
+import requests
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
 # ==================== КОНФИГУРАЦИЯ ====================
 
-# ВАШ НОВЫЙ КЛЮЧ OPENAI (вставьте в Render Environment)
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "sk-9a7048e59d87434dbcb43e6e3d2a47e1")
+# ВАШ НАСТОЯЩИЙ DEEPSEEK API КЛЮЧ
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "sk-9a7048e59d87434dbcb43e6e3d2a47e1")
 
 # Лимиты
 FREE_LIMIT = 10
@@ -301,11 +302,11 @@ def check_request_limit(user_id):
     return used < limit, limit, used, remaining
 
 def get_ai_response(user_id, message, role='assistant'):
-    """РЕАЛЬНЫЙ ОТВЕТ ОТ OPENAI GPT-3.5-TURBO С ВАШИМ НОВЫМ КЛЮЧОМ"""
+    """НАСТОЯЩИЙ AI ЧЕРЕЗ DEEPSEEK API (ваш провайдер)"""
     
     # Проверяем ключ
-    if not OPENAI_API_KEY or len(OPENAI_API_KEY) < 30:
-        return "❌ **OpenAI API ключ не настроен.**\n\nДобавьте правильный OPENAI_API_KEY в переменные окружения Render."
+    if not DEEPSEEK_API_KEY or not DEEPSEEK_API_KEY.startswith("sk-"):
+        return "❌ **DeepSeek API ключ не настроен.**\n\nДобавьте DEEPSEEK_API_KEY в переменные окружения Render."
     
     # Системные промпты
     system_prompts = {
@@ -327,54 +328,59 @@ def get_ai_response(user_id, message, role='assistant'):
     }
     
     try:
-        import openai
+        url = "https://api.deepseek.com/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+            "Content-Type": "application/json"
+        }
         
-        # Устанавливаем ВАШ НОВЫЙ КЛЮЧ
-        openai.api_key = OPENAI_API_KEY
-        
-        # Простой и надежный запрос
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
+        data = {
+            "model": "deepseek-chat",
+            "messages": [
                 {"role": "system", "content": system_prompts.get(role, system_prompts['assistant'])},
                 {"role": "user", "content": message}
             ],
-            temperature=0.7,
-            max_tokens=1000
-        )
+            "max_tokens": 1000,
+            "temperature": 0.7,
+            "stream": False
+        }
         
-        ai_response = response.choices[0].message.content
+        response = requests.post(url, json=data, headers=headers, timeout=30)
         
-        # Сохраняем в историю
-        user = users_db.get(user_id, {})
-        if 'chat_history' not in user:
-            user['chat_history'] = []
-        user['chat_history'].append({"role": "user", "content": message})
-        user['chat_history'].append({"role": "assistant", "content": ai_response})
+        if response.status_code == 200:
+            result = response.json()
+            ai_response = result["choices"][0]["message"]["content"]
+            
+            # Сохраняем в историю
+            user = users_db.get(user_id, {})
+            if 'chat_history' not in user:
+                user['chat_history'] = []
+            user['chat_history'].append({"role": "user", "content": message})
+            user['chat_history'].append({"role": "assistant", "content": ai_response})
+            
+            return ai_response
         
-        return ai_response
-        
-    except ImportError:
-        return "❌ **Библиотека OpenAI не установлена.**"
-    
-    except Exception as e:
-        error_msg = str(e)
-        if "authentication" in error_msg.lower() or "incorrect api key" in error_msg.lower():
-            return f"""🔑 **ПРОБЛЕМА С КЛЮЧОМ OPENAI**
+        elif response.status_code == 401:
+            return f"""🔑 **Ошибка аутентификации DeepSeek API**
+            
+Ваш ключ: `{DEEPSEEK_API_KEY[:15]}...`
 
-Ключ: `{OPENAI_API_KEY[:15]}...`
-
-**Решение:**
-1. Убедитесь что ключ скопирован полностью
-2. Проверьте баланс на platform.openai.com
-3. Если не работает - создайте новый ключ
-4. Обновите в настройках Render"""
+**Что делать:**
+1. Проверьте ключ на https://platform.deepseek.com/api_keys
+2. Убедитесь что ключ активен
+3. DeepSeek дает бесплатные запросы"""
         
-        elif "rate limit" in error_msg.lower():
-            return "⏳ **Превышен лимит запросов. Попробуйте позже.**"
+        elif response.status_code == 429:
+            return "⏳ **Превышен лимит запросов DeepSeek. Попробуйте позже.**"
         
         else:
-            return f"⚠️ **Ошибка**: {error_msg[:100]}"
+            return f"⚠️ **Ошибка DeepSeek API**: {response.status_code}"
+            
+    except requests.exceptions.Timeout:
+        return "⏰ **Таймаут запроса к DeepSeek. Попробуйте снова.**"
+    
+    except Exception as e:
+        return f"❌ **Ошибка**: {str(e)[:150]}"
 
 # ==================== МАРШРУТЫ ====================
 
@@ -385,8 +391,8 @@ def index():
     
     can_request, limit, used, remaining = check_request_limit(user_id)
     
-    # Проверяем статус OpenAI
-    openai_status = "✅ Активен" if OPENAI_API_KEY and len(OPENAI_API_KEY) > 30 else "❌ Не настроен"
+    # Проверяем статус DeepSeek
+    deepseek_status = "✅ Активен" if DEEPSEEK_API_KEY and len(DEEPSEEK_API_KEY) > 30 else "❌ Не настроен"
     
     header = f'''
     <div class="header">
@@ -395,7 +401,7 @@ def index():
         </a>
         <div class="logo"><i class="fas fa-brain"></i></div>
         <h1 class="title">Mateus AI</h1>
-        <p>Настоящий искусственный интеллект с GPT-3.5 Turbo</p>
+        <p>Настоящий искусственный интеллект на DeepSeek</p>
         
         <div style="margin-top: 20px;">
             <span style="background: rgba(50,205,50,0.15); color: #32cd32; padding: 8px 16px; border-radius: 20px;">
@@ -406,7 +412,7 @@ def index():
         </div>
         
         <div style="margin-top: 15px; font-size: 0.9rem; color: #90ee90;">
-            <i class="fas fa-bolt"></i> OpenAI GPT-3.5 Turbo | Статус: {openai_status}
+            <i class="fas fa-bolt"></i> DeepSeek AI | Статус: {deepseek_status}
         </div>
     </div>
     '''
@@ -449,7 +455,7 @@ def index():
         <div style="margin-top: 20px; padding: 15px; background: rgba(50,205,50,0.05); border-radius: 10px; border: 1px solid #2a5c2a;">
             <h4><i class="fas fa-info-circle"></i> О системе</h4>
             <p style="font-size: 0.85rem; color: #a3d9a3; margin-top: 10px;">
-                • Реальный AI (OpenAI GPT-3.5)<br>
+                • Реальный AI (DeepSeek)<br>
                 • 3 режима работы<br>
                 • PRO подписка<br>
                 • Лимиты запросов
@@ -462,7 +468,7 @@ def index():
     <div class="card">
         <h3><i class="fas fa-comments"></i> Чат с Mateus AI</h3>
         <p style="color: #a3d9a3; margin-bottom: 20px; font-size: 0.95rem;">
-            Задавайте любые вопросы! Работает на реальном OpenAI GPT-3.5 Turbo
+            Задавайте любые вопросы! Работает на реальном DeepSeek AI
         </p>
         
         <div id="chatMessages" class="chat-messages">
@@ -471,7 +477,7 @@ def index():
                 <div style="margin-top: 10px;" class="ai-response">
                     <h3>👋 Привет! Я настоящий искусственный интеллект Mateus AI!</h3>
                     
-                    <p>Я работаю на основе <strong>OpenAI GPT-3.5 Turbo</strong> и могу помочь вам с:</p>
+                    <p>Я работаю на основе <strong>DeepSeek AI</strong> и могу помочь вам с:</p>
                     
                     <ul>
                         <li>💡 <strong>Ответами на любые вопросы</strong></li>
@@ -518,17 +524,17 @@ def index():
     
     footer = f'''
     <div class="footer">
-        <p>© 2024 Mateus AI | Реальный искусственный интеллект на OpenAI GPT-3.5 Turbo</p>
+        <p>© 2024 Mateus AI | Реальный искусственный интеллект на DeepSeek AI</p>
         <p style="margin-top: 10px; font-size: 0.8rem; opacity: 0.8;">
             Работает на Render.com | Free: {FREE_LIMIT}/день | PRO: {PRO_LIMIT}/день
         </p>
         <p style="margin-top: 5px; font-size: 0.75rem; opacity: 0.6;">
-            <i class="fas fa-bolt"></i> OpenAI API | GPT-3.5 Turbo | Ключ: {OPENAI_API_KEY[:8]}...
+            <i class="fas fa-bolt"></i> DeepSeek API | Работает из России | Ключ: {DEEPSEEK_API_KEY[:8]}...
         </p>
     </div>
     '''
     
-    return render_page('Mateus AI | Real AI', header, sidebar, content, footer)
+    return render_page('Mateus AI | DeepSeek AI', header, sidebar, content, footer)
 
 @app.route('/set_role', methods=['POST'])
 def set_role():
@@ -559,7 +565,7 @@ def chat():
         # Получаем выбранную роль
         role = session.get('role', 'assistant')
         
-        # ПОЛУЧАЕМ РЕАЛЬНЫЙ ОТВЕТ ОТ OPENAI
+        # ПОЛУЧАЕМ РЕАЛЬНЫЙ ОТВЕТ ОТ DEEPSEEK AI
         ai_response = get_ai_response(user_id, message, role)
         
         # Обновляем счетчик запросов
@@ -709,8 +715,8 @@ def admin():
                 <p style="font-size: 2.5rem;">{requests_today}</p>
             </div>
             <div style="background: #4dabf7; padding: 20px; border-radius: 10px; text-align: center;">
-                <h3>🤖 OpenAI</h3>
-                <p style="font-size: 2.5rem;">{"✅ Работает" if OPENAI_API_KEY and len(OPENAI_API_KEY) > 30 else "❌ Ошибка"}</p>
+                <h3>🤖 DeepSeek</h3>
+                <p style="font-size: 2.5rem;">{"✅ Работает" if DEEPSEEK_API_KEY and len(DEEPSEEK_API_KEY) > 30 else "❌ Ошибка"}</p>
             </div>
         </div>
         
@@ -793,8 +799,8 @@ def admin():
         <div style="margin-top: 30px; padding: 20px; background: rgba(50,205,50,0.1); border-radius: 10px;">
             <h3 style="color: #32cd32;">Статус системы</h3>
             <p style="color: #a3d9a3;">
-                <strong>OpenAI API:</strong> {'✅ Работает' if OPENAI_API_KEY and len(OPENAI_API_KEY) > 30 else '❌ Ошибка'}<br>
-                <strong>Ключ:</strong> {OPENAI_API_KEY[:15]}...<br>
+                <strong>DeepSeek API:</strong> {'✅ Работает' if DEEPSEEK_API_KEY and len(DEEPSEEK_API_KEY) > 30 else '❌ Ошибка'}<br>
+                <strong>Ключ:</strong> {DEEPSEEK_API_KEY[:15]}...<br>
                 <strong>Всего пользователей:</strong> {users_total}<br>
                 <strong>Запросов сегодня:</strong> {requests_today}<br>
                 <strong>PRO пользователей:</strong> {pro_users} ({round(pro_users/users_total*100, 1) if users_total > 0 else 0}%)
@@ -834,22 +840,22 @@ def health():
     return jsonify({
         'status': 'healthy',
         'service': 'Mateus AI',
-        'ai': 'OpenAI GPT-3.5 Turbo',
-        'openai_key': OPENAI_API_KEY[:8] + '...',
-        'key_valid': len(OPENAI_API_KEY) > 30,
+        'ai': 'DeepSeek AI',
+        'deepseek_key': DEEPSEEK_API_KEY[:8] + '...',
+        'key_valid': len(DEEPSEEK_API_KEY) > 30,
         'timestamp': datetime.now().isoformat(),
         'users': len(users_db),
-        'version': '4.0',
-        'message': 'Используется ваш новый ключ OpenAI'
+        'version': '5.0',
+        'message': 'Используется DeepSeek AI - ваш реальный провайдер'
     })
 
 # ==================== ЗАПУСК СЕРВЕРА ====================
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
-    print(f"🚀 Запуск Mateus AI v4.0 на порту {port}")
-    print(f"🧠 Реальный AI: OpenAI GPT-3.5 Turbo")
-    print(f"🔑 Ваш новый ключ OpenAI: {OPENAI_API_KEY[:15]}...")
+    print(f"🚀 Запуск Mateus AI v5.0 на порту {port}")
+    print(f"🧠 Реальный AI: DeepSeek")
+    print(f"🔑 Ваш DeepSeek API ключ: {DEEPSEEK_API_KEY[:15]}...")
     print(f"💰 PRO система: активна ({PRO_LIMIT} запросов/день)")
     print("✅ Готов к работе! Отправьте 'Привет' для теста.")
     app.run(host='0.0.0.0', port=port, debug=False)
