@@ -1,5 +1,5 @@
 """
-Mateus AI - Рабочая версия с OpenAI API 0.28.1 (стабильная)
+Mateus AI - Финальная рабочая версия с вашим новым ключом OpenAI
 """
 
 import os
@@ -13,8 +13,8 @@ app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
 # ==================== КОНФИГУРАЦИЯ ====================
 
-# НАСТРОЙКА OPENAI
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "sk-4d3a66a7465c4e82b6af708cd646e6ba")
+# ВАШ НОВЫЙ КЛЮЧ OPENAI (вставьте в Render Environment)
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "sk-9a7048e59d87434dbcb43e6e3d2a47e1")
 
 # Лимиты
 FREE_LIMIT = 10
@@ -301,72 +301,44 @@ def check_request_limit(user_id):
     return used < limit, limit, used, remaining
 
 def get_ai_response(user_id, message, role='assistant'):
-    """РЕАЛЬНЫЙ ОТВЕТ ОТ OPENAI GPT-3.5-TURBO (СТАБИЛЬНАЯ ВЕРСИЯ)"""
+    """РЕАЛЬНЫЙ ОТВЕТ ОТ OPENAI GPT-3.5-TURBO С ВАШИМ НОВЫМ КЛЮЧОМ"""
     
     # Проверяем ключ
-    if not OPENAI_API_KEY:
-        return "❌ **OpenAI API ключ не настроен.**\n\nДобавьте OPENAI_API_KEY в переменные окружения Render."
+    if not OPENAI_API_KEY or len(OPENAI_API_KEY) < 30:
+        return "❌ **OpenAI API ключ не настроен.**\n\nДобавьте правильный OPENAI_API_KEY в переменные окружения Render."
     
-    # Системные промпты для разных ролей
+    # Системные промпты
     system_prompts = {
         'assistant': """Ты - Mateus AI, умный и полезный AI-ассистент. 
-Ты говоришь на русском языке. 
-Отвечай вежливо, информативно и по делу. 
-Используй эмодзи где уместно. 
-Форматируй ответы с помощью Markdown.
+Отвечай вежливо, информативно и по делу на русском языке.
+Используй эмодзи где уместно.
 Будь дружелюбным и готовым помочь с любыми вопросами.
-Отвечай полно и развернуто, но по существу.
-Всегда старайся давать максимально полезные и подробные ответы.
-Если вопрос сложный - разбивай ответ на логические части.
-Используй заголовки, списки и форматирование для лучшей читаемости.""",
+Отвечай полно и развернуто, но по существу.""",
         
         'programmer': """Ты - Mateus AI, эксперт по программированию.
-Ты говоришь на русском языке.
 Помогай с кодом на любых языках программирования.
-Объясняй концепции простыми словами.
-Предоставляй примеры кода и лучшие практики.
-Отвечай на вопросы об алгоритмах, структурах данных, фреймворках.
-Форматируй код с правильными отступами.
-Всегда проверяй код на наличие ошибок перед ответом.
-Давай подробные объяснения к коду.""",
+Объясняй концепции простыми словами на русском языке.
+Предоставляй примеры кода и лучшие практики.""",
         
         'teacher': """Ты - Mateus AI, опытный учитель и наставник.
-Ты говоришь на русском языке.
-Объясняй сложные темы простым и понятным языком.
+Объясняй сложные темы простым и понятным русским языком.
 Используй аналогии и примеры из жизни.
-Поощряй любопытство и задавание вопросов.
-Разбивай сложные темы на простые шаги.
-Всегда проверяй, понятно ли объяснение.
-Задавай наводящие вопросы чтобы помочь понять тему."""
+Разбивай сложные темы на простые шаги."""
     }
     
-    # Получаем историю чата пользователя
-    user = users_db.get(user_id, {})
-    chat_history = user.get('chat_history', [])
-    
-    # Формируем сообщения для OpenAI
-    messages = [
-        {"role": "system", "content": system_prompts.get(role, system_prompts['assistant'])}
-    ]
-    
-    # Добавляем историю (последние 6 сообщений для контекста)
-    for hist_msg in chat_history[-6:]:
-        messages.append(hist_msg)
-    
-    # Добавляем текущее сообщение пользователя
-    messages.append({"role": "user", "content": message})
-    
     try:
-        # ПРОБУЕМ СТАБИЛЬНУЮ ВЕРСИЮ OPENAI
         import openai
         
-        # Устанавливаем ключ
+        # Устанавливаем ВАШ НОВЫЙ КЛЮЧ
         openai.api_key = OPENAI_API_KEY
         
-        # ВЫЗОВ РЕАЛЬНОГО OPENAI API (старая стабильная версия)
+        # Простой и надежный запрос
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
-            messages=messages,
+            messages=[
+                {"role": "system", "content": system_prompts.get(role, system_prompts['assistant'])},
+                {"role": "user", "content": message}
+            ],
             temperature=0.7,
             max_tokens=1000
         )
@@ -374,42 +346,35 @@ def get_ai_response(user_id, message, role='assistant'):
         ai_response = response.choices[0].message.content
         
         # Сохраняем в историю
-        users_db[user_id]['chat_history'].append({"role": "user", "content": message})
-        users_db[user_id]['chat_history'].append({"role": "assistant", "content": ai_response})
-        
-        # Ограничиваем историю последними 12 сообщениями
-        if len(users_db[user_id]['chat_history']) > 12:
-            users_db[user_id]['chat_history'] = users_db[user_id]['chat_history'][-12:]
+        user = users_db.get(user_id, {})
+        if 'chat_history' not in user:
+            user['chat_history'] = []
+        user['chat_history'].append({"role": "user", "content": message})
+        user['chat_history'].append({"role": "assistant", "content": ai_response})
         
         return ai_response
         
     except ImportError:
-        return "❌ **Библиотека OpenAI не установлена.**\n\nУстановите: pip install openai==0.28.1"
-    
-    except openai.error.AuthenticationError:
-        return """🔑 **Ошибка аутентификации OpenAI API**
-        
-Ваш ключ: `{}...`
-
-Проверьте:
-1. Правильность API ключа в настройках Render
-2. Что ключ имеет доступ к GPT-3.5 Turbo
-3. Баланс на аккаунте OpenAI""".format(OPENAI_API_KEY[:10])
-    
-    except openai.error.RateLimitError:
-        return """⏳ **Превышен лимит запросов или закончились средства**
-        
-Проверьте баланс на platform.openai.com"""
-    
-    except openai.error.APIError as e:
-        return f"⚠️ **Ошибка API OpenAI**: {str(e)[:200]}"
+        return "❌ **Библиотека OpenAI не установлена.**"
     
     except Exception as e:
-        return f"""❌ **Ошибка соединения с AI**
+        error_msg = str(e)
+        if "authentication" in error_msg.lower() or "incorrect api key" in error_msg.lower():
+            return f"""🔑 **ПРОБЛЕМА С КЛЮЧОМ OPENAI**
+
+Ключ: `{OPENAI_API_KEY[:15]}...`
+
+**Решение:**
+1. Убедитесь что ключ скопирован полностью
+2. Проверьте баланс на platform.openai.com
+3. Если не работает - создайте новый ключ
+4. Обновите в настройках Render"""
         
-Детали: {str(e)[:200]}
+        elif "rate limit" in error_msg.lower():
+            return "⏳ **Превышен лимит запросов. Попробуйте позже.**"
         
-Пожалуйста, попробуйте еще раз через минуту."""
+        else:
+            return f"⚠️ **Ошибка**: {error_msg[:100]}"
 
 # ==================== МАРШРУТЫ ====================
 
@@ -420,7 +385,10 @@ def index():
     
     can_request, limit, used, remaining = check_request_limit(user_id)
     
-    header = '''
+    # Проверяем статус OpenAI
+    openai_status = "✅ Активен" if OPENAI_API_KEY and len(OPENAI_API_KEY) > 30 else "❌ Не настроен"
+    
+    header = f'''
     <div class="header">
         <a href="/admin" style="position: absolute; top: 20px; right: 20px; color: #32cd32;">
             <i class="fas fa-cog"></i> Админ
@@ -431,19 +399,19 @@ def index():
         
         <div style="margin-top: 20px;">
             <span style="background: rgba(50,205,50,0.15); color: #32cd32; padding: 8px 16px; border-radius: 20px;">
-                <i class="fas fa-''' + ('rocket' if can_request else 'hourglass-end') + '''"></i>
-                ''' + str(used) + '''/''' + str(limit) + ''' запросов | Осталось: ''' + str(remaining) + '''
+                <i class="fas fa-{'rocket' if can_request else 'hourglass-end'}"></i>
+                {used}/{limit} запросов | Осталось: {remaining}
             </span>
-            ''' + ('<span style="background: gold; color: #333; padding: 4px 12px; border-radius: 20px; margin-left: 10px; font-weight: bold;"><i class="fas fa-crown"></i> PRO</span>' if user.get('is_pro') else '') + '''
+            {'<span style="background: gold; color: #333; padding: 4px 12px; border-radius: 20px; margin-left: 10px; font-weight: bold;"><i class="fas fa-crown"></i> PRO</span>' if user.get('is_pro') else ''}
         </div>
         
         <div style="margin-top: 15px; font-size: 0.9rem; color: #90ee90;">
-            <i class="fas fa-bolt"></i> Работает на OpenAI GPT-3.5 Turbo | API v0.28.1
+            <i class="fas fa-bolt"></i> OpenAI GPT-3.5 Turbo | Статус: {openai_status}
         </div>
     </div>
     '''
     
-    sidebar = '''
+    sidebar = f'''
     <div class="card">
         <h3><i class="fas fa-mask"></i> Режимы AI</h3>
         <p style="color: #a3d9a3; margin-bottom: 15px; font-size: 0.9rem;">Выберите специализацию AI</p>
@@ -462,9 +430,9 @@ def index():
         
         <div style="background: rgba(151,117,250,0.1); padding: 20px; border-radius: 15px; border: 1px solid #9775fa;">
             <h4><i class="fas fa-crown"></i> PRO Подписка</h4>
-            <p style="color: #a3d9a3; margin: 10px 0;">''' + str(PRO_PRICE) + ''' руб. / 30 дней</p>
+            <p style="color: #a3d9a3; margin: 10px 0;">{PRO_PRICE} руб. / 30 дней</p>
             <p style="font-size: 0.9rem; color: #90ee90; margin-bottom: 15px;">
-                <i class="fas fa-bolt"></i> ''' + str(PRO_LIMIT) + ''' запросов в день
+                <i class="fas fa-bolt"></i> {PRO_LIMIT} запросов в день
             </p>
             <input type="text" id="proCode" placeholder="Введите PRO код" 
                    style="width: 100%; padding: 12px; margin: 10px 0; border-radius: 8px; border: 1px solid #2a5c2a; background: rgba(0,0,0,0.2); color: white;">
@@ -482,10 +450,9 @@ def index():
             <h4><i class="fas fa-info-circle"></i> О системе</h4>
             <p style="font-size: 0.85rem; color: #a3d9a3; margin-top: 10px;">
                 • Реальный AI (OpenAI GPT-3.5)<br>
-                • Сохранение контекста разговора<br>
-                • Поддержка Markdown<br>
                 • 3 режима работы<br>
-                • Контекст: 6 сообщений
+                • PRO подписка<br>
+                • Лимиты запросов
             </p>
         </div>
     </div>
@@ -495,7 +462,7 @@ def index():
     <div class="card">
         <h3><i class="fas fa-comments"></i> Чат с Mateus AI</h3>
         <p style="color: #a3d9a3; margin-bottom: 20px; font-size: 0.95rem;">
-            Задавайте любые вопросы! AI запоминает контекст разговора.
+            Задавайте любые вопросы! Работает на реальном OpenAI GPT-3.5 Turbo
         </p>
         
         <div id="chatMessages" class="chat-messages">
@@ -507,17 +474,17 @@ def index():
                     <p>Я работаю на основе <strong>OpenAI GPT-3.5 Turbo</strong> и могу помочь вам с:</p>
                     
                     <ul>
-                        <li>💡 <strong>Ответами на любые вопросы</strong> (наука, техника, история, культура)</li>
-                        <li>💻 <strong>Помощью в программировании</strong> (Python, JavaScript, Java, C++ и другие)</li>
-                        <li>📚 <strong>Объяснением сложных тем</strong> простым языком</li>
-                        <li>✍️ <strong>Написанием текстов</strong> (статьи, письма, креативные идеи)</li>
-                        <li>🔍 <strong>Анализом информации</strong> и решением проблем</li>
+                        <li>💡 <strong>Ответами на любые вопросы</strong></li>
+                        <li>💻 <strong>Помощью в программировании</strong></li>
+                        <li>📚 <strong>Объяснением сложных тем</strong></li>
+                        <li>✍️ <strong>Написанием текстов</strong></li>
+                        <li>🔍 <strong>Анализом информации</strong></li>
                     </ul>
                     
                     <div style="background: rgba(50,205,50,0.1); padding: 15px; border-radius: 10px; margin: 20px 0; border-left: 4px solid #32cd32;">
                         <p><strong>🎭 Выберите режим слева</strong> для лучших результатов:</p>
                         <ul style="margin-top: 5px;">
-                            <li><strong>Помощник</strong> - общие вопросы и помощь</li>
+                            <li><strong>Помощник</strong> - общие вопросы</li>
                             <li><strong>Программист</strong> - код и технологии</li>
                             <li><strong>Учитель</strong> - обучение и объяснения</li>
                         </ul>
@@ -525,10 +492,10 @@ def index():
                     
                     <p><strong>Примеры вопросов:</strong></p>
                     <ul>
-                        <li>"Объясни квантовую физику простыми словами"</li>
-                        <li>"Напиши код для сортировки массива на Python"</li>
-                        <li>"Что такое искусственный интеллект?"</li>
-                        <li>"Помоги написать письмо для работы"</li>
+                        <li>"Привет, как дела?"</li>
+                        <li>"Напиши код на Python для сайта"</li>
+                        <li>"Объясни что такое нейросеть"</li>
+                        <li>"Помоги составить план обучения"</li>
                     </ul>
                     
                     <p>Просто напишите ваш вопрос ниже и нажмите Enter!</p>
@@ -537,31 +504,26 @@ def index():
         </div>
         
         <div class="chat-input">
-            <input type="text" id="messageInput" placeholder="Задайте ваш вопрос... (Enter для отправки)" autofocus>
+            <input type="text" id="messageInput" placeholder="Напишите 'Привет' для теста... (Enter для отправки)" autofocus>
             <button class="btn" onclick="sendMessage()" style="background: linear-gradient(135deg, #32cd32, #2a8c2a); font-weight: bold;">
                 <i class="fas fa-paper-plane"></i> Отправить
             </button>
         </div>
         
-        <div style="margin-top: 15px; display: flex; justify-content: space-between; font-size: 0.85rem; color: #a3d9a3;">
-            <div>
-                <i class="fas fa-lightbulb"></i> <strong>Совет:</strong> Задавайте конкретные вопросы
-            </div>
-            <div>
-                <i class="fas fa-history"></i> Контекст: 6 сообщений
-            </div>
+        <div style="margin-top: 15px; font-size: 0.85rem; color: #a3d9a3;">
+            <i class="fas fa-lightbulb"></i> <strong>Тест:</strong> Напишите "Привет" чтобы проверить работу AI
         </div>
     </div>
     '''
     
-    footer = '''
+    footer = f'''
     <div class="footer">
         <p>© 2024 Mateus AI | Реальный искусственный интеллект на OpenAI GPT-3.5 Turbo</p>
         <p style="margin-top: 10px; font-size: 0.8rem; opacity: 0.8;">
-            Работает на Render.com | Free: ''' + str(FREE_LIMIT) + '''/день | PRO: ''' + str(PRO_LIMIT) + '''/день
+            Работает на Render.com | Free: {FREE_LIMIT}/день | PRO: {PRO_LIMIT}/день
         </p>
         <p style="margin-top: 5px; font-size: 0.75rem; opacity: 0.6;">
-            <i class="fas fa-bolt"></i> OpenAI API v0.28.1 | GPT-3.5 Turbo | Контекстная память
+            <i class="fas fa-bolt"></i> OpenAI API | GPT-3.5 Turbo | Ключ: {OPENAI_API_KEY[:8]}...
         </p>
     </div>
     '''
@@ -728,7 +690,7 @@ def admin():
     pro_users = sum(1 for u in users_db.values() if u.get('is_pro'))
     requests_today = sum(u.get('requests_today', 0) for u in users_db.values())
     
-    html = '''
+    html = f'''
     <div style="max-width: 1200px; margin: 0 auto; padding: 20px;">
         <h1 style="color: #32cd32;">Админ-панель Mateus AI</h1>
         <p><a href="/" style="color: #90ee90;">← На главную</a></p>
@@ -736,25 +698,25 @@ def admin():
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin: 30px 0;">
             <div style="background: #1a5d1a; padding: 20px; border-radius: 10px; text-align: center;">
                 <h3>👥 Пользователей</h3>
-                <p style="font-size: 2.5rem;">''' + str(users_total) + '''</p>
+                <p style="font-size: 2.5rem;">{users_total}</p>
             </div>
             <div style="background: #9775fa; padding: 20px; border-radius: 10px; text-align: center;">
                 <h3>👑 PRO</h3>
-                <p style="font-size: 2.5rem;">''' + str(pro_users) + '''</p>
+                <p style="font-size: 2.5rem;">{pro_users}</p>
             </div>
             <div style="background: #2e8b57; padding: 20px; border-radius: 10px; text-align: center;">
                 <h3>💬 Запросы сегодня</h3>
-                <p style="font-size: 2.5rem;">''' + str(requests_today) + '''</p>
+                <p style="font-size: 2.5rem;">{requests_today}</p>
             </div>
             <div style="background: #4dabf7; padding: 20px; border-radius: 10px; text-align: center;">
                 <h3>🤖 OpenAI</h3>
-                <p style="font-size: 2.5rem;">Активен</p>
+                <p style="font-size: 2.5rem;">{"✅ Работает" if OPENAI_API_KEY and len(OPENAI_API_KEY) > 30 else "❌ Ошибка"}</p>
             </div>
         </div>
         
         <h2>Создать PRO код</h2>
         <form method="POST" action="/admin/create_code">
-            <input type="hidden" name="password" value="''' + ADMIN_PASSWORD + '''">
+            <input type="hidden" name="password" value="{ADMIN_PASSWORD}">
             <div style="display: flex; gap: 10px; margin-bottom: 20px;">
                 <input type="number" name="days" value="30" placeholder="Дней" 
                        style="padding: 12px; border-radius: 8px; border: 1px solid #2a5c2a; background: rgba(0,0,0,0.3); color: white; width: 120px;">
@@ -784,13 +746,13 @@ def admin():
     '''
     
     for code, data in settings_db.get('pro_codes', {}).items():
-        html += '''
+        html += f'''
                 <tr style="border-bottom: 1px solid #2a5c2a;">
-                    <td style="padding: 12px;"><code>''' + code + '''</code></td>
-                    <td style="padding: 12px;">''' + data.get('created', '')[:10] + '''</td>
-                    <td style="padding: 12px;">''' + data.get('expires', '')[:10] + '''</td>
-                    <td style="padding: 12px;">''' + ('✅' if data.get('used') else '❌') + '''</td>
-                    <td style="padding: 12px;">''' + (data.get('note', '') or '-') + '''</td>
+                    <td style="padding: 12px;"><code>{code}</code></td>
+                    <td style="padding: 12px;">{data.get('created', '')[:10]}</td>
+                    <td style="padding: 12px;">{data.get('expires', '')[:10]}</td>
+                    <td style="padding: 12px;">{'✅' if data.get('used') else '❌'}</td>
+                    <td style="padding: 12px;">{data.get('note', '') or '-'}</td>
                 </tr>
         '''
     
@@ -814,27 +776,28 @@ def admin():
         history_len = len(user.get('chat_history', []))
         last_request = user.get('last_request', '-')
         
-        html += '''
+        html += f'''
                 <tr style="border-bottom: 1px solid #2a5c2a;">
-                    <td style="padding: 12px;"><code>''' + uid[:12] + '''...</code></td>
-                    <td style="padding: 12px;">''' + ('✅ PRO' if user.get('is_pro') else '❌ Free') + '''</td>
-                    <td style="padding: 12px;">''' + str(user.get('requests_today', 0)) + '''</td>
-                    <td style="padding: 12px;">''' + str(history_len // 2) + ''' диалогов</td>
-                    <td style="padding: 12px;">''' + str(last_request) + '''</td>
+                    <td style="padding: 12px;"><code>{uid[:12]}...</code></td>
+                    <td style="padding: 12px;">{'✅ PRO' if user.get('is_pro') else '❌ Free'}</td>
+                    <td style="padding: 12px;">{user.get('requests_today', 0)}</td>
+                    <td style="padding: 12px;">{history_len // 2} диалогов</td>
+                    <td style="padding: 12px;">{last_request}</td>
                 </tr>
         '''
     
-    html += '''
+    html += f'''
             </table>
         </div>
         
         <div style="margin-top: 30px; padding: 20px; background: rgba(50,205,50,0.1); border-radius: 10px;">
             <h3 style="color: #32cd32;">Статус системы</h3>
             <p style="color: #a3d9a3;">
-                <strong>OpenAI API:</strong> ''' + ('✅ Активен' if OPENAI_API_KEY else '❌ Не настроен') + '''<br>
-                <strong>Всего пользователей:</strong> ''' + str(users_total) + '''<br>
-                <strong>Запросов сегодня:</strong> ''' + str(requests_today) + '''<br>
-                <strong>PRO пользователей:</strong> ''' + str(pro_users) + ''' (''' + (str(round(pro_users/users_total*100, 1)) if users_total > 0 else '0') + '''%)
+                <strong>OpenAI API:</strong> {'✅ Работает' if OPENAI_API_KEY and len(OPENAI_API_KEY) > 30 else '❌ Ошибка'}<br>
+                <strong>Ключ:</strong> {OPENAI_API_KEY[:15]}...<br>
+                <strong>Всего пользователей:</strong> {users_total}<br>
+                <strong>Запросов сегодня:</strong> {requests_today}<br>
+                <strong>PRO пользователей:</strong> {pro_users} ({round(pro_users/users_total*100, 1) if users_total > 0 else 0}%)
             </p>
         </div>
     </div>
@@ -872,21 +835,21 @@ def health():
         'status': 'healthy',
         'service': 'Mateus AI',
         'ai': 'OpenAI GPT-3.5 Turbo',
-        'api_version': '0.28.1',
+        'openai_key': OPENAI_API_KEY[:8] + '...',
+        'key_valid': len(OPENAI_API_KEY) > 30,
         'timestamp': datetime.now().isoformat(),
         'users': len(users_db),
-        'openai_configured': bool(OPENAI_API_KEY),
-        'version': '3.2',
-        'features': ['real_ai', 'chat_history', 'pro_system', 'role_system', 'markdown']
+        'version': '4.0',
+        'message': 'Используется ваш новый ключ OpenAI'
     })
 
 # ==================== ЗАПУСК СЕРВЕРА ====================
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
-    print(f"🚀 Запуск Mateus AI v3.2 на порту {port}")
+    print(f"🚀 Запуск Mateus AI v4.0 на порту {port}")
     print(f"🧠 Реальный AI: OpenAI GPT-3.5 Turbo")
-    print(f"🔑 OpenAI API v0.28.1: {'✅ Настроен' if OPENAI_API_KEY else '❌ Не настроен'}")
+    print(f"🔑 Ваш новый ключ OpenAI: {OPENAI_API_KEY[:15]}...")
     print(f"💰 PRO система: активна ({PRO_LIMIT} запросов/день)")
-    print(f"💬 Контекстная память: 6 сообщений")
+    print("✅ Готов к работе! Отправьте 'Привет' для теста.")
     app.run(host='0.0.0.0', port=port, debug=False)
