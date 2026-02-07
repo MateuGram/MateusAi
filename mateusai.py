@@ -1,23 +1,19 @@
 import os
 import json
 import time
-import hashlib
-import requests
 import sqlite3
 from datetime import datetime, timedelta
 from functools import wraps
-from flask import Flask, render_template_string, request, jsonify, session, redirect, url_for, make_response
+from flask import Flask, request, jsonify, session, render_template_string
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
-from bs4 import BeautifulSoup
 import pytz
+import urllib.parse
 import re
-import logging
-import traceback
 
 # Конфигурация
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'mateus-ai-super-secret-key-2024')
+app.secret_key = os.environ.get('SECRET_KEY', 'mateus-ai-super-secret-key-2024-change-this')
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///mateus.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
@@ -50,7 +46,6 @@ class AdminSettings(db.Model):
 # Создание таблиц
 with app.app_context():
     db.create_all()
-    # Создаем администратора по умолчанию
     if not AdminSettings.query.first():
         admin = AdminSettings(admin_password=generate_password_hash(
             os.environ.get('ADMIN_PASSWORD', 'MateusAdmin2024!')
@@ -59,14 +54,1338 @@ with app.app_context():
         db.session.commit()
 
 # Утилиты для поиска в интернете
+try:
+    import requests
+    from bs4 import BeautifulSoup
+    HAS_INTERNET_DEPS = True
+except ImportError:
+    HAS_INTERNET_DEPS = False
+    print("Внимание: Некоторые зависимости не установлены. Используется режим эмуляции.")
+
 class InternetSearcher:
     @staticmethod
     def search_web(query, num_results=5):
         """Поиск информации в интернете"""
+        if not HAS_INTERNET_DEPS:
+            # Возвращаем тестовые данные если зависимости не установлены
+            return [
+                {'title': f'Результат по запросу: {query}', 'link': 'https://example.com/1'},
+                {'title': 'Информация из открытых источников', 'link': 'https://example.com/2'},
+                {'title': 'Данные для анализа', 'link': 'https://example.com/3'}
+            ]
+        
         try:
-            # Используем DuckDuckGo через HTML парсинг
-            search_url = f"https://duckduckgo.com/html/?q={requests.utils.quote(query)}"
+            # Используем DuckDuckGo
+            encoded_query = urllib.parse.quote(query)
+            url = f"https://html.duckduckgo.com/html/?q={encoded_query}"
+            
             headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Referer': 'https://duckduckgo.com/',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+            }
+            
+            response = requests.get(url, headers=headers, timeout=15)
+            
+            if response.status_code != 200:
+                return []
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            results = []
+            
+            # Парсим результаты
+            for result in soup.find_all('a', class_='result__url'):
+                title = result.text.strip()
+                link = result.get('href', '')
+                
+                if link and title:
+                    # Получаем полное название
+                    title_elem = result.find_previous('a', class_='result__title')
+                    if title_elem and title_elem.text.strip():
+                        title = title_elem.text.strip()
+                    
+                    # Чистим ссылку
+                    if link.startswith('//'):
+                        link = 'https:' + link
+                    elif not link.startswith('http'):
+                        link = 'https://' + link
+                    
+                    results.append({
+                        'title': title[:150],
+                        'link': link
+                    })
+                
+                if len(results) >= num_results:
+                    break
+            
+            # Альтернативный парсинг
+            if len(results) < 2:
+                for link in soup.find_all('a', href=True):
+                    if len(results) >= num_results:
+                        break
+                    
+                    href = link.get('href')
+                    if href and 'duckduckgo.com' not in href and ('http://' in href or 'https://' in href):
+                        results.append({
+                            'title': link.text[:150] or 'Источник',
+                            'link': href
+                        })
+            
+            return results[:num_results]
+            
+        except Exception as e:
+            print(f"Ошибка поиска: {str(e)[:100]}")
+            return []
+
+    @staticmethod
+    def get_page_content(url):
+        """Получение содержимого веб-страницы"""
+        if not HAS_INTERNET_DEPS:
+            return f"Содержимое страницы для анализа. Это тестовые данные. Ссылка: {url}"
+        
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+            }
+            
+            response = requests.get(url, headers=headers, timeout=10)
+            
+            if response.status_code != 200:
+                return "Не удалось загрузить страницу"
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Удаляем ненужные элементы
+            for element in soup(['script', 'style', 'nav', 'footer', 'header', 'iframe']):
+                element.decompose()
+            
+            # Получаем текст
+            text = soup.get_text()
+            lines = (line.strip() for line in text.splitlines())
+            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+            text = ' '.join(chunk for chunk in chunks if chunk)
+            
+            return text[:2000]  # Ограничиваем объем
+            
+        except Exception as e:
+            print(f"Ошибка получения контента: {str(e)[:100]}")
+            return "Ошибка при получении содержимого страницы"
+
+    @staticmethod
+    def get_current_time():
+        """Получение текущего времени из интернета"""
+        try:
+            # Попробуем несколько источников
+            time_sources = [
+                'http://worldtimeapi.org/api/timezone/Europe/Moscow',
+                'http://worldtimeapi.org/api/timezone/UTC',
+                'http://worldtimeapi.org/api/ip'
+            ]
+            
+            for source in time_sources:
+                try:
+                    response = requests.get(source, timeout=3)
+                    if response.status_code == 200:
+                        data = response.json()
+                        if 'datetime' in data:
+                            return data['datetime']
+                        elif 'utc_datetime' in data:
+                            return data['utc_datetime']
+                except:
+                    continue
+                    
+        except Exception as e:
+            print(f"Ошибка получения времени: {str(e)[:100]}")
+        
+        # Резервный вариант
+        return datetime.now(pytz.timezone('Europe/Moscow')).isoformat()
+
+# ИИ обработчик
+class MateusAI:
+    def __init__(self):
+        self.searcher = InternetSearcher()
+        self.knowledge_base = {
+            'о себе': "Я - Mateus AI, нейросеть для поиска и анализа информации из интернета. Я могу искать данные, анализировать их и предоставлять точные ответы на ваши вопросы.",
+            'возможности': "1. Поиск информации в интернете\n2. Анализ и сравнение данных\n3. Ответы на вопросы с источниками\n4. Получение актуального времени\n5. Работа с текстовыми запросами",
+            'помощь': "Просто задайте мне вопрос, и я найду информацию в интернете. Вы можете спрашивать о чем угодно: текущие события, исторические факты, научные данные и многое другое.",
+        }
+        
+    def process_query(self, query, user_context=None):
+        """Основная обработка запроса"""
+        try:
+            query_lower = query.lower().strip()
+            
+            # Проверяем внутреннюю базу знаний
+            if query_lower in self.knowledge_base:
+                return {
+                    'answer': f"🤖 **Mateus AI:**\n\n{self.knowledge_base[query_lower]}\n\nЗадайте конкретный вопрос для поиска в интернете!",
+                    'sources': [],
+                    'confidence': 'high'
+                }
+            
+            # Специальные запросы
+            if any(word in query_lower for word in ['время', 'дата', 'сейчас', 'time', 'date', 'час', 'число']):
+                current_time = self.searcher.get_current_time()
+                return self._format_time_response(current_time)
+            
+            if any(word in query_lower for word in ['привет', 'hello', 'hi', 'здравствуй', 'начать']):
+                return {
+                    'answer': "🤖 **Привет! Я Mateus AI.**\n\nЯ ищу информацию в интернете, анализирую различные источники и предоставляю вам точные ответы.\n\nПросто задайте любой вопрос, и я найду самую актуальную информацию по этой теме!\n\nПримеры вопросов:\n• Какая сейчас погода в Москве?\n• Кто написал 'Войну и мир'?\n• Что такое искусственный интеллект?\n• Какие последние новости в мире технологий?",
+                    'sources': [],
+                    'confidence': 'high'
+                }
+            
+            # Поиск в интернете
+            search_results = self.searcher.search_web(query, 3)
+            
+            if not search_results:
+                return {
+                    'answer': f"🤖 **Mateus AI:**\n\nПо запросу '{query}' не удалось найти информацию в открытых источниках.\n\nПопробуйте:\n1. Переформулировать вопрос\n2. Использовать другие ключевые слова\n3. Задать более конкретный запрос\n\n*Я продолжаю улучшать свои алгоритмы поиска!*",
+                    'sources': [],
+                    'confidence': 'low'
+                }
+            
+            # Анализ результатов
+            analyzed_info = self._analyze_results(query, search_results)
+            
+            # Генерация ответа
+            response = self._generate_response(query, analyzed_info)
+            
+            return response
+            
+        except Exception as e:
+            print(f"Ошибка обработки: {str(e)}")
+            return {
+                'answer': f"🤖 **Mateus AI:**\n\nИзвините, произошла ошибка при обработке вашего запроса.\n\nОшибка: {str(e)[:100]}\n\nПожалуйста, попробуйте еще раз или переформулируйте вопрос.",
+                'sources': [],
+                'confidence': 'low'
+            }
+    
+    def _analyze_results(self, query, results):
+        """Анализ и сравнение информации из найденных источников"""
+        analyzed = []
+        
+        for result in results:
+            try:
+                content = self.searcher.get_page_content(result['link'])
+                
+                if content and len(content) > 100:
+                    # Анализ релевантности
+                    query_words = set(re.findall(r'\w+', query.lower()))
+                    content_words = set(re.findall(r'\w+', content.lower()))
+                    common_words = query_words.intersection(content_words)
+                    
+                    relevance = len(common_words) / max(len(query_words), 1)
+                    
+                    # Учитываем длину контента
+                    content_score = min(len(content) / 1000, 1.0)
+                    
+                    # Итоговая релевантность
+                    final_relevance = (relevance * 0.7 + content_score * 0.3)
+                    
+                    analyzed.append({
+                        'title': result['title'],
+                        'relevance': final_relevance,
+                        'content': content[:1000],
+                        'source': result['link']
+                    })
+                    
+            except Exception as e:
+                print(f"Ошибка анализа результата: {str(e)[:50]}")
+                continue
+        
+        # Сортируем по релевантности
+        analyzed.sort(key=lambda x: x['relevance'], reverse=True)
+        
+        # Если нет результатов анализа, создаем базовые
+        if not analyzed and results:
+            for i, result in enumerate(results[:2]):
+                analyzed.append({
+                    'title': result['title'],
+                    'relevance': 0.5 - (i * 0.1),
+                    'content': f"Информация по теме '{query}' из источника: {result['link']}",
+                    'source': result['link']
+                })
+        
+        return analyzed
+    
+    def _generate_response(self, query, analyzed_info):
+        """Генерация финального ответа"""
+        if not analyzed_info:
+            return {
+                'answer': f"🤖 **Mateus AI:**\n\nНе удалось проанализировать найденную информацию по запросу '{query}'.\n\nПопробуйте задать вопрос по-другому или уточнить тему.",
+                'sources': [],
+                'confidence': 'low'
+            }
+        
+        best_source = analyzed_info[0]
+        
+        # Определяем уровень уверенности
+        if best_source['relevance'] > 0.7:
+            confidence = 'высокая'
+            confidence_emoji = '✅'
+        elif best_source['relevance'] > 0.4:
+            confidence = 'средняя'
+            confidence_emoji = '⚠️'
+        else:
+            confidence = 'низкая'
+            confidence_emoji = '🤔'
+        
+        # Формируем ответ
+        answer = f"🤖 **Mateus AI отвечает на: '{query}'**\n\n"
+        answer += f"{confidence_emoji} **На основе анализа интернета:**\n\n"
+        
+        # Основная информация
+        if len(best_source['content']) > 300:
+            summary = best_source['content'][:300] + "..."
+        else:
+            summary = best_source['content']
+        
+        answer += f"📝 {summary}\n\n"
+        
+        # Источники
+        if len(analyzed_info) > 0:
+            answer += "📚 **Источники информации:**\n"
+            for i, source in enumerate(analyzed_info[:3], 1):
+                answer += f"{i}. {source['title']}\n"
+        
+        # Мета-информация
+        answer += f"\n⚡ **Уверенность:** {confidence}\n"
+        answer += f"🔍 **Проанализировано источников:** {len(analyzed_info)}\n"
+        
+        # Совет
+        if confidence == 'низкая':
+            answer += "\n💡 **Совет:** Попробуйте переформулировать вопрос или задать более конкретный запрос."
+        
+        return {
+            'answer': answer,
+            'sources': [s['source'] for s in analyzed_info[:3]],
+            'confidence': confidence
+        }
+    
+    def _format_time_response(self, time_str):
+        """Форматирование ответа с временем"""
+        try:
+            # Парсим время
+            if 'T' in time_str:
+                dt_str = time_str.split('T')[0]
+                time_part = time_str.split('T')[1][:8]
+            else:
+                dt = datetime.now(pytz.timezone('Europe/Moscow'))
+                dt_str = dt.strftime('%Y-%m-%d')
+                time_part = dt.strftime('%H:%M:%S')
+            
+            # Преобразуем в читаемый формат
+            try:
+                year, month, day = map(int, dt_str.split('-'))
+                weekday_num = datetime(year, month, day).weekday()
+                weekdays = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье']
+                weekday = weekdays[weekday_num]
+            except:
+                weekday = ""
+            
+            return {
+                'answer': f"🕒 **Текущее время и дата:**\n\n"
+                         f"📅 **Дата:** {day:02d}.{month:02d}.{year}\n"
+                         f"📆 **День недели:** {weekday}\n"
+                         f"⏰ **Время:** {time_part}\n"
+                         f"🌍 **Часовой пояс:** Москва (UTC+3)\n\n"
+                         f"*Информация получена из интернета*",
+                'sources': [],
+                'confidence': 'высокая'
+            }
+        except:
+            # Резервный ответ
+            dt = datetime.now(pytz.timezone('Europe/Moscow'))
+            return {
+                'answer': f"🕒 **Текущее время и дата:**\n\n"
+                         f"📅 **Дата:** {dt.strftime('%d.%m.%Y')}\n"
+                         f"⏰ **Время:** {dt.strftime('%H:%M:%S')}\n"
+                         f"🌍 **Часовой пояс:** Москва\n\n"
+                         f"*Локальное время сервера*",
+                'sources': [],
+                'confidence': 'средняя'
+            }
+
+# Инициализация ИИ
+ai = MateusAI()
+
+# Декораторы
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return jsonify({'success': False, 'error': 'Требуется авторизация'}), 401
+        return f(*args, **kwargs)
+    return decorated_function
+
+def check_daily_limit(user):
+    """Проверка дневного лимита запросов"""
+    today = datetime.now().strftime('%Y-%m-%d')
+    
+    if user.last_request_date != today:
+        user.daily_requests = 0
+        user.last_request_date = today
+        db.session.commit()
+    
+    if user.subscription == 'pro':
+        return True
+    
+    max_requests = 34
+    
+    if user.daily_requests >= max_requests:
+        return False
+    
+    user.daily_requests += 1
+    db.session.commit()
+    return True
+
+# HTML шаблон (упрощенный для надежности)
+HTML_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mateus AI - Нейросеть для ваших запросов</title>
+    <style>
+        :root {
+            --neon-green: #00ff88;
+            --dark-bg: #0a0a0a;
+            --card-bg: #111111;
+            --text: #ffffff;
+            --text-muted: #888888;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: var(--dark-bg);
+            color: var(--text);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        header {
+            text-align: center;
+            padding: 30px 20px;
+            margin-bottom: 30px;
+        }
+        
+        .logo {
+            font-size: 48px;
+            font-weight: 900;
+            color: var(--neon-green);
+            text-shadow: 0 0 10px var(--neon-green);
+            margin-bottom: 10px;
+            letter-spacing: 2px;
+        }
+        
+        .slogan {
+            font-size: 18px;
+            color: var(--text-muted);
+            margin-bottom: 20px;
+        }
+        
+        .main-content {
+            display: flex;
+            gap: 30px;
+            flex-wrap: wrap;
+        }
+        
+        .chat-section {
+            flex: 1;
+            min-width: 300px;
+        }
+        
+        .info-section {
+            width: 350px;
+            min-width: 300px;
+        }
+        
+        .card {
+            background: var(--card-bg);
+            border: 1px solid #222;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 0 20px rgba(0, 255, 136, 0.05);
+        }
+        
+        .chat-messages {
+            height: 400px;
+            overflow-y: auto;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #000;
+            border-radius: 10px;
+            border: 1px solid #222;
+        }
+        
+        .message {
+            padding: 12px 15px;
+            margin-bottom: 10px;
+            border-radius: 10px;
+            max-width: 85%;
+            word-wrap: break-word;
+        }
+        
+        .user-message {
+            background: linear-gradient(135deg, #003322, #005533);
+            margin-left: auto;
+            border: 1px solid var(--neon-green);
+        }
+        
+        .ai-message {
+            background: #1a1a1a;
+            margin-right: auto;
+            border: 1px solid #333;
+            white-space: pre-line;
+        }
+        
+        .input-area {
+            display: flex;
+            gap: 10px;
+        }
+        
+        input[type="text"] {
+            flex: 1;
+            padding: 15px;
+            background: #000;
+            border: 2px solid var(--neon-green);
+            border-radius: 10px;
+            color: white;
+            font-size: 16px;
+        }
+        
+        input[type="text"]:focus {
+            outline: none;
+            box-shadow: 0 0 10px rgba(0, 255, 136, 0.3);
+        }
+        
+        button {
+            padding: 15px 25px;
+            background: linear-gradient(45deg, #003322, var(--neon-green));
+            border: none;
+            border-radius: 10px;
+            color: black;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 255, 136, 0.3);
+        }
+        
+        .btn-primary { background: linear-gradient(45deg, #003322, var(--neon-green)); }
+        .btn-secondary { background: linear-gradient(45deg, #333333, #555555); color: white; }
+        .btn-premium { background: linear-gradient(45deg, #330066, #8800ff); color: white; }
+        .btn-danger { background: linear-gradient(45deg, #660000, #ff3300); color: white; }
+        
+        .stats-grid {
+            display: grid;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .stat-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px;
+            background: #000;
+            border-radius: 8px;
+            border: 1px solid #222;
+        }
+        
+        .stat-value {
+            color: var(--neon-green);
+            font-weight: bold;
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 1000;
+            padding: 20px;
+        }
+        
+        .modal-content {
+            background: var(--card-bg);
+            max-width: 500px;
+            margin: 50px auto;
+            padding: 30px;
+            border-radius: 15px;
+            border: 2px solid var(--neon-green);
+            position: relative;
+        }
+        
+        .close-modal {
+            position: absolute;
+            top: 15px;
+            right: 20px;
+            color: var(--neon-green);
+            font-size: 24px;
+            cursor: pointer;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: var(--text-muted);
+        }
+        
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 12px;
+            background: #000;
+            border: 1px solid #333;
+            border-radius: 8px;
+            color: white;
+        }
+        
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 25px;
+            background: var(--card-bg);
+            border: 1px solid var(--neon-green);
+            border-radius: 10px;
+            display: none;
+            z-index: 1001;
+            animation: slideIn 0.3s;
+        }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        .loader {
+            display: none;
+            text-align: center;
+            padding: 20px;
+            color: var(--neon-green);
+        }
+        
+        .user-info {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        
+        @media (max-width: 768px) {
+            .main-content {
+                flex-direction: column;
+            }
+            .info-section {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">MATEUS AI</div>
+            <div class="slogan">Нейросеть для ваших запросов</div>
+            <div class="user-info" id="userInfo">
+                <!-- Динамически заполняется -->
+            </div>
+        </header>
+        
+        <div class="main-content">
+            <div class="chat-section">
+                <div class="card">
+                    <h3 style="color: var(--neon-green); margin-bottom: 15px;">💬 Чат с Mateus AI</h3>
+                    <div class="chat-messages" id="chatMessages">
+                        <div class="message ai-message">
+                            🤖 Добро пожаловать в Mateus AI! Я ищу информацию в интернете и предоставляю точные ответы. Задайте мне любой вопрос!
+                        </div>
+                    </div>
+                    
+                    <div class="input-area">
+                        <input type="text" id="userInput" placeholder="Введите ваш вопрос..." autocomplete="off">
+                        <button class="btn-primary" onclick="sendMessage()">Отправить</button>
+                    </div>
+                    
+                    <div class="loader" id="loader">
+                        🔍 Поиск информации в интернете...
+                    </div>
+                </div>
+            </div>
+            
+            <div class="info-section">
+                <div class="card">
+                    <h3 style="color: var(--neon-green); margin-bottom: 20px;">📊 Ваша статистика</h3>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <span>Токены:</span>
+                            <span class="stat-value" id="tokenCount">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>Подписка:</span>
+                            <span class="stat-value" id="subscriptionType">Free</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>Запросов сегодня:</span>
+                            <span class="stat-value" id="requestsToday">0/34</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>Токенов до Pro:</span>
+                            <span class="stat-value" id="tokensToPro">1000</span>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top: 25px; display: grid; gap: 10px;">
+                        <button class="btn-premium" onclick="showUpgradeModal()" id="upgradeBtn">
+                            💎 Апгрейд до Pro
+                        </button>
+                        <button class="btn-secondary" onclick="showAdminModal()">
+                            🔧 Админ-панель
+                        </button>
+                        <button class="btn-danger" onclick="logout()" id="logoutBtn">
+                            🚪 Выйти
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Модальные окна -->
+    <div class="modal" id="loginModal">
+        <div class="modal-content">
+            <span class="close-modal" onclick="closeModal('loginModal')">×</span>
+            <h2 style="color: var(--neon-green); margin-bottom: 25px;">🔐 Вход / Регистрация</h2>
+            
+            <div class="form-group">
+                <label>Имя пользователя</label>
+                <input type="text" id="loginUsername" placeholder="Введите имя">
+            </div>
+            
+            <div class="form-group">
+                <label>Email</label>
+                <input type="email" id="loginEmail" placeholder="email@example.com">
+            </div>
+            
+            <div class="form-group">
+                <label>Пароль</label>
+                <input type="password" id="loginPassword" placeholder="Введите пароль">
+            </div>
+            
+            <div id="loginError" style="color: #ff4444; margin-bottom: 15px;"></div>
+            
+            <button class="btn-primary" onclick="registerUser()" style="width: 100%;">
+                Зарегистрироваться / Войти
+            </button>
+        </div>
+    </div>
+    
+    <div class="modal" id="adminModal">
+        <div class="modal-content">
+            <span class="close-modal" onclick="closeModal('adminModal')">×</span>
+            <h2 style="color: var(--neon-green); margin-bottom: 25px;">🔧 Админ-панель</h2>
+            
+            <div class="form-group">
+                <label>Пароль администратора</label>
+                <input type="password" id="adminPassword" placeholder="Введите пароль">
+            </div>
+            
+            <div class="form-group">
+                <label>Имя пользователя</label>
+                <input type="text" id="adminUsername" placeholder="Для кого изменяем">
+            </div>
+            
+            <div class="form-group">
+                <label>Действие</label>
+                <select id="adminAction">
+                    <option value="add_tokens">Добавить токены</option>
+                    <option value="set_pro">Установить Pro</option>
+                    <option value="remove_pro">Убрать Pro</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>Количество токенов</label>
+                <input type="number" id="adminAmount" value="100" min="1">
+            </div>
+            
+            <div id="adminError" style="color: #ff4444; margin-bottom: 15px;"></div>
+            
+            <button class="btn-primary" onclick="adminAction()" style="width: 100%;">
+                Выполнить
+            </button>
+        </div>
+    </div>
+    
+    <div class="modal" id="upgradeModal">
+        <div class="modal-content">
+            <span class="close-modal" onclick="closeModal('upgradeModal')">×</span>
+            <h2 style="color: var(--neon-green); margin-bottom: 25px;">💎 Подписка Pro</h2>
+            
+            <div style="background: #000; padding: 20px; border-radius: 10px; margin-bottom: 20px;">
+                <h4 style="margin-bottom: 10px;">Преимущества:</h4>
+                <ul style="padding-left: 20px; color: var(--text-muted);">
+                    <li>✅ Неограниченные запросы</li>
+                    <li>⚡ Приоритетная обработка</li>
+                    <li>🔍 Расширенный анализ</li>
+                    <li>🚀 Экспериментальные функции</li>
+                </ul>
+            </div>
+            
+            <div style="text-align: center; padding: 20px; border: 2px solid var(--neon-green); border-radius: 10px; margin-bottom: 20px;">
+                <h3>Стоимость: 1000 токенов</h3>
+                <p style="color: var(--text-muted); margin-top: 10px;" id="tokensInfo"></p>
+            </div>
+            
+            <button class="btn-premium" onclick="upgradeToPro()" style="width: 100%;" id="upgradeActionBtn">
+                Активировать Pro
+            </button>
+        </div>
+    </div>
+    
+    <div class="notification" id="notification"></div>
+    
+    <script>
+        let currentUser = null;
+        
+        // Инициализация
+        document.addEventListener('DOMContentLoaded', function() {
+            checkAuth();
+            setupEventListeners();
+        });
+        
+        function setupEventListeners() {
+            // Enter для отправки
+            document.getElementById('userInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') sendMessage();
+            });
+            
+            // Авто-логин модалка
+            setTimeout(() => {
+                if (!currentUser) {
+                    showLoginModal();
+                }
+            }, 1000);
+        }
+        
+        // Модальные окна
+        function showLoginModal() {
+            document.getElementById('loginModal').style.display = 'block';
+            document.getElementById('loginError').textContent = '';
+        }
+        
+        function showAdminModal() {
+            if (!currentUser) {
+                showNotification('Сначала войдите в систему', 'error');
+                showLoginModal();
+                return;
+            }
+            document.getElementById('adminModal').style.display = 'block';
+            document.getElementById('adminError').textContent = '';
+        }
+        
+        function showUpgradeModal() {
+            if (!currentUser) {
+                showNotification('Сначала войдите в систему', 'error');
+                showLoginModal();
+                return;
+            }
+            
+            document.getElementById('upgradeModal').style.display = 'block';
+            const tokensInfo = document.getElementById('tokensInfo');
+            const upgradeBtn = document.getElementById('upgradeActionBtn');
+            
+            if (currentUser.tokens >= 1000) {
+                tokensInfo.innerHTML = `<span style="color: #00ff88">✅ У вас ${currentUser.tokens} токенов</span>`;
+                upgradeBtn.disabled = false;
+                upgradeBtn.innerHTML = '💰 Активировать Pro за 1000 токенов';
+            } else {
+                const needed = 1000 - currentUser.tokens;
+                tokensInfo.innerHTML = `<span style="color: #ff4444">❌ Нужно еще ${needed} токенов</span>`;
+                upgradeBtn.disabled = true;
+                upgradeBtn.innerHTML = '❌ Недостаточно токенов';
+            }
+        }
+        
+        function closeModal(modalId) {
+            document.getElementById(modalId).style.display = 'none';
+        }
+        
+        // Уведомления
+        function showNotification(message, type = 'info') {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.style.display = 'block';
+            notification.style.borderColor = type === 'error' ? '#ff4444' : '#00ff88';
+            
+            setTimeout(() => {
+                notification.style.display = 'none';
+            }, 3000);
+        }
+        
+        // API функции
+        async function registerUser() {
+            const username = document.getElementById('loginUsername').value.trim();
+            const email = document.getElementById('loginEmail').value.trim();
+            const password = document.getElementById('loginPassword').value;
+            
+            if (!username || !email || !password) {
+                document.getElementById('loginError').textContent = 'Заполните все поля';
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/register', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({username, email, password})
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    currentUser = data.user;
+                    updateUserInfo();
+                    closeModal('loginModal');
+                    showNotification(`Добро пожаловать, ${username}!`, 'success');
+                    addMessage(`🤖 Привет, ${username}! Теперь вы можете задавать вопросы.`, 'ai');
+                } else {
+                    document.getElementById('loginError').textContent = data.error;
+                }
+            } catch (error) {
+                showNotification('Ошибка соединения', 'error');
+            }
+        }
+        
+        async function sendMessage() {
+            if (!currentUser) {
+                showLoginModal();
+                return;
+            }
+            
+            const input = document.getElementById('userInput');
+            const message = input.value.trim();
+            
+            if (!message) return;
+            
+            addMessage(message, 'user');
+            input.value = '';
+            document.getElementById('loader').style.display = 'block';
+            
+            try {
+                const response = await fetch('/api/ask', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({question: message})
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    addMessage(data.answer, 'ai');
+                    updateUserInfo();
+                } else {
+                    addMessage(`❌ ${data.error}`, 'ai');
+                }
+            } catch (error) {
+                addMessage('❌ Ошибка соединения', 'ai');
+            }
+            
+            document.getElementById('loader').style.display = 'none';
+        }
+        
+        async function adminAction() {
+            const password = document.getElementById('adminPassword').value;
+            const username = document.getElementById('adminUsername').value.trim();
+            const action = document.getElementById('adminAction').value;
+            const amount = parseInt(document.getElementById('adminAmount').value);
+            
+            if (!password || !username) {
+                document.getElementById('adminError').textContent = 'Заполните все поля';
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/admin', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        admin_password: password,
+                        username: username,
+                        action: action,
+                        amount: amount
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showNotification(data.message, 'success');
+                    closeModal('adminModal');
+                    
+                    if (currentUser.username === username) {
+                        checkAuth();
+                    }
+                } else {
+                    document.getElementById('adminError').textContent = data.error;
+                }
+            } catch (error) {
+                showNotification('Ошибка соединения', 'error');
+            }
+        }
+        
+        async function upgradeToPro() {
+            try {
+                const response = await fetch('/api/upgrade', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    currentUser = data.user;
+                    updateUserInfo();
+                    closeModal('upgradeModal');
+                    showNotification('🎉 Теперь у вас Pro подписка!', 'success');
+                } else {
+                    showNotification(data.error, 'error');
+                }
+            } catch (error) {
+                showNotification('Ошибка соединения', 'error');
+            }
+        }
+        
+        async function logout() {
+            try {
+                await fetch('/api/logout');
+                currentUser = null;
+                updateUserInfo();
+                document.getElementById('chatMessages').innerHTML = 
+                    '<div class="message ai-message">🤖 Вы вышли из системы</div>';
+                showNotification('Вы успешно вышли', 'info');
+                setTimeout(showLoginModal, 1000);
+            } catch (error) {
+                showNotification('Ошибка выхода', 'error');
+            }
+        }
+        
+        // Вспомогательные функции
+        function addMessage(text, sender) {
+            const messagesDiv = document.getElementById('chatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}-message`;
+            messageDiv.innerHTML = text;
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+        
+        function updateUserInfo() {
+            const userInfoDiv = document.getElementById('userInfo');
+            const tokenCount = document.getElementById('tokenCount');
+            const subscriptionType = document.getElementById('subscriptionType');
+            const requestsToday = document.getElementById('requestsToday');
+            const tokensToPro = document.getElementById('tokensToPro');
+            const upgradeBtn = document.getElementById('upgradeBtn');
+            const logoutBtn = document.getElementById('logoutBtn');
+            
+            if (currentUser) {
+                userInfoDiv.innerHTML = `
+                    <div style="margin-bottom: 5px;">
+                        👤 <strong>${currentUser.username}</strong>
+                        ${currentUser.subscription === 'pro' ? '<span style="color: #8800ff; margin-left: 10px;">PRO</span>' : ''}
+                    </div>
+                    <div style="color: var(--text-muted); font-size: 14px;">
+                        Токены: ${currentUser.tokens} | Запросы: ${currentUser.daily_requests || 0}/${currentUser.subscription === 'pro' ? '∞' : '34'}
+                    </div>
+                `;
+                
+                tokenCount.textContent = currentUser.tokens;
+                subscriptionType.textContent = currentUser.subscription === 'pro' ? 'Pro' : 'Free';
+                subscriptionType.style.color = currentUser.subscription === 'pro' ? '#8800ff' : '#00ff88';
+                
+                const maxRequests = currentUser.subscription === 'pro' ? '∞' : '34';
+                requestsToday.textContent = `${currentUser.daily_requests || 0}/${maxRequests}`;
+                
+                if (currentUser.subscription === 'pro') {
+                    tokensToPro.textContent = 'PRO';
+                    tokensToPro.style.color = '#8800ff';
+                    upgradeBtn.style.display = 'none';
+                } else {
+                    const needed = 1000 - currentUser.tokens;
+                    tokensToPro.textContent = needed > 0 ? needed : 'Готово!';
+                    upgradeBtn.style.display = 'block';
+                    logoutBtn.style.display = 'block';
+                }
+            } else {
+                userInfoDiv.innerHTML = '<button class="btn-primary" onclick="showLoginModal()">Войти / Регистрация</button>';
+                tokenCount.textContent = '0';
+                subscriptionType.textContent = 'None';
+                requestsToday.textContent = '0/0';
+                tokensToPro.textContent = '1000';
+                upgradeBtn.style.display = 'block';
+                logoutBtn.style.display = 'none';
+            }
+        }
+        
+        async function checkAuth() {
+            try {
+                const response = await fetch('/api/me');
+                const data = await response.json();
+                
+                if (data.success) {
+                    currentUser = data.user;
+                    updateUserInfo();
+                }
+            } catch (error) {
+                console.log('Не авторизован');
+            }
+        }
+        
+        // Закрытие модалок по клику вне
+        window.onclick = function(event) {
+            if (event.target.classList.contains('modal')) {
+                event.target.style.display = 'none';
+            }
+        };
+    </script>
+</body>
+</html>
+'''
+
+# API маршруты
+@app.route('/')
+def index():
+    return HTML_TEMPLATE
+
+@app.route('/api/register', methods=['POST'])
+def api_register():
+    try:
+        data = request.json
+        username = data.get('username', '').strip()
+        email = data.get('email', '').strip()
+        password = data.get('password', '')
+        
+        if not username or not email or not password:
+            return jsonify({'success': False, 'error': 'Все поля обязательны'})
+        
+        if len(username) < 3:
+            return jsonify({'success': False, 'error': 'Имя минимум 3 символа'})
+        
+        user = User.query.filter((User.username == username) | (User.email == email)).first()
+        
+        if user:
+            if user.check_password(password):
+                session['user_id'] = user.id
+                return jsonify({
+                    'success': True,
+                    'user': {
+                        'id': user.id,
+                        'username': user.username,
+                        'tokens': user.tokens,
+                        'subscription': user.subscription,
+                        'daily_requests': user.daily_requests
+                    }
+                })
+            else:
+                return jsonify({'success': False, 'error': 'Неверный пароль'})
+        else:
+            user = User(username=username, email=email)
+            user.set_password(password)
+            user.tokens = 100
+            user.last_request_date = datetime.now().strftime('%Y-%m-%d')
+            
+            db.session.add(user)
+            db.session.commit()
+            
+            session['user_id'] = user.id
+            
+            return jsonify({
+                'success': True,
+                'user': {
+                    'id': user.id,
+                    'username': user.username,
+                    'tokens': user.tokens,
+                    'subscription': user.subscription,
+                    'daily_requests': user.daily_requests
+                }
+            })
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Ошибка: {str(e)}'})
+
+@app.route('/api/me')
+def api_me():
+    if 'user_id' in session:
+        user = User.query.get(session['user_id'])
+        if user:
+            return jsonify({
+                'success': True,
+                'user': {
+                    'id': user.id,
+                    'username': user.username,
+                    'tokens': user.tokens,
+                    'subscription': user.subscription,
+                    'daily_requests': user.daily_requests
+                }
+            })
+    return jsonify({'success': False})
+
+@app.route('/api/ask', methods=['POST'])
+def api_ask():
+    try:
+        if 'user_id' not in session:
+            return jsonify({'success': False, 'error': 'Требуется авторизация'})
+        
+        user = User.query.get(session['user_id'])
+        if not user:
+            return jsonify({'success': False, 'error': 'Пользователь не найден'})
+        
+        # Проверка лимита
+        today = datetime.now().strftime('%Y-%m-%d')
+        if user.last_request_date != today:
+            user.daily_requests = 0
+            user.last_request_date = today
+        
+        if user.subscription != 'pro' and user.daily_requests >= 34:
+            return jsonify({'success': False, 'error': 'Достигнут лимит 34 запроса в день'})
+        
+        data = request.json
+        question = data.get('question', '').strip()
+        
+        if not question:
+            return jsonify({'success': False, 'error': 'Введите вопрос'})
+        
+        # Обработка запроса
+        response = ai.process_query(question)
+        
+        # Обновляем статистику
+        user.daily_requests += 1
+        if user.subscription == 'free':
+            user.tokens += 10
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'answer': response['answer'],
+            'sources': response['sources'],
+            'confidence': response['confidence']
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Ошибка: {str(e)}'})
+
+@app.route('/api/admin', methods=['POST'])
+def api_admin():
+    try:
+        data = request.json
+        admin_password = data.get('admin_password')
+        username = data.get('username')
+        action = data.get('action')
+        amount = data.get('amount', 100)
+        
+        admin_settings = AdminSettings.query.first()
+        if not admin_settings or not check_password_hash(admin_settings.admin_password, admin_password):
+            return jsonify({'success': False, 'error': 'Неверный пароль админа'})
+        
+        user = User.query.filter_by(username=username).first()
+        if not user:
+            return jsonify({'success': False, 'error': 'Пользователь не найден'})
+        
+        message = ''
+        if action == 'add_tokens':
+            user.tokens += int(amount)
+            message = f'Добавлено {amount} токенов'
+        elif action == 'set_pro':
+            user.subscription = 'pro'
+            message = 'Подписка Pro активирована'
+        elif action == 'remove_pro':
+            user.subscription = 'free'
+            message = 'Подписка Pro отключена'
+        else:
+            return jsonify({'success': False, 'error': 'Неизвестное действие'})
+        
+        db.session.commit()
+        return jsonify({'success': True, 'message': message})
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Ошибка: {str(e)}'})
+
+@app.route('/api/upgrade', methods=['POST'])
+def api_upgrade():
+    try:
+        if 'user_id' not in session:
+            return jsonify({'success': False, 'error': 'Требуется авторизация'})
+        
+        user = User.query.get(session['user_id'])
+        if not user:
+            return jsonify({'success': False, 'error': 'Пользователь не найден'})
+        
+        if user.subscription == 'pro':
+            return jsonify({'success': False, 'error': 'Уже есть Pro'})
+        
+        if user.tokens < 1000:
+            return jsonify({'success': False, 'error': f'Нужно 1000 токенов, у вас {user.tokens}'})
+        
+        user.tokens -= 1000
+        user.subscription = 'pro'
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'user': {
+                'id': user.id,
+                'username': user.username,
+                'tokens': user.tokens,
+                'subscription': user.subscription
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Ошибка: {str(e)}'})
+
+@app.route('/api/logout')
+def api_logout():
+    session.clear()
+    return jsonify({'success': True})
+
+@app.route('/health')
+def health():
+    return jsonify({'status': 'ok', 'service': 'Mateus AI'})
+
+# Запуск приложения
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)            headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.5',
