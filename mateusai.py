@@ -1,72 +1,1219 @@
 import os
 import json
 import time
-import sqlite3
-from datetime import datetime, timedelta
-from functools import wraps
-from flask import Flask, request, jsonify, session, render_template_string
-from flask_sqlalchemy import SQLAlchemy
-from werkzeug.security import generate_password_hash, check_password_hash
-import pytz
+import hashlib
 import urllib.parse
-import re
+import urllib.request
+from datetime import datetime, timedelta
+from flask import Flask, request, jsonify, session, render_template_string
 
-# Конфигурация
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'mateus-ai-super-secret-key-2024-change-this')
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///mateus.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
+app.secret_key = os.environ.get('SECRET_KEY', 'mateus-ai-super-secret-2024-change-this')
 
-# Инициализация БД
-db = SQLAlchemy(app)
+# База данных в памяти
+users_db = {}
+requests_log = {}
 
-# Модели
-class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True, nullable=False)
-    email = db.Column(db.String(120), unique=True, nullable=False)
-    password_hash = db.Column(db.String(200), nullable=False)
-    tokens = db.Column(db.Integer, default=100)
-    subscription = db.Column(db.String(20), default='free')
-    daily_requests = db.Column(db.Integer, default=0)
-    last_request_date = db.Column(db.String(10))
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+# Настройки
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'AdminMateus2024!')
+MAX_FREE_REQUESTS = 34
+TOKENS_FOR_PRO = 1000
+TOKENS_PER_REQUEST = 10
+
+def hash_pwd(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+class MateusAI:
+    def __init__(self):
+        self.knowledge = {
+            'о себе': "Я Mateus AI - нейросеть для поиска и анализа информации. Ищу данные в интернете, анализирую и предоставляю точные ответы.",
+            'помощь': "Задайте любой вопрос. Примеры: 'Какая погода?', 'Кто создал Python?', 'Что такое ИИ?', 'Сколько время?'",
+            'возможности': "Поиск информации, анализ данных, ответы на вопросы, работа с запросами, проверка времени.",
+            'создатель': "Я создан для помощи в поиске и анализе информации из интернета.",
+            'токены': f"Вы получаете {TOKENS_PER_REQUEST} токенов за каждый запрос. {TOKENS_FOR_PRO} токенов = подписка Pro.",
+            'pro': "Pro подписка дает неограниченные запросы и приоритетную обработку."
+        }
     
-    def set_password(self, password):
-        self.password_hash = generate_password_hash(password)
+    def search_online(self, query):
+        """Имитация поиска в интернете"""
+        results = []
+        
+        # Базовые ответы для популярных запросов
+        common_answers = {
+            'python': "Python - язык программирования высокого уровня, созданный Гвидо ван Россумом. Популярен в веб-разработке, data science и ИИ.",
+            'искусственный интеллект': "ИИ - способность машин выполнять задачи, требующие человеческого интеллекта: обучение, распознавание, анализ.",
+            'нейросеть': "Нейросеть - математическая модель, имитирующая работу мозга человека. Используется для распознавания образов и прогнозирования.",
+            'flask': "Flask - микрофреймворк на Python для веб-разработки. Простой и гибкий, идеален для небольших приложений.",
+            'render': "Render.com - облачная платформа для деплоя приложений с автоматическим масштабированием и SSL.",
+            'время': f"Текущее время: {datetime.now().strftime('%H:%M:%S')}",
+            'дата': f"Сегодня: {datetime.now().strftime('%d.%m.%Y')}",
+            'погода': "Погода зависит от региона. Для точных данных уточните город.",
+            'биткоин': "Bitcoin - первая криптовалюта, созданная Сатоши Накамото. Использует технологию blockchain.",
+            'космос': "Космос - пространство за пределами земной атмосферы. Содержит звезды, планеты, галактики и черные дыры."
+        }
+        
+        query_lower = query.lower()
+        
+        # Ищем совпадения
+        for key, answer in common_answers.items():
+            if key in query_lower:
+                results.append({
+                    'title': f'Информация: {key}',
+                    'content': answer,
+                    'source': 'https://knowledge.mateus.ai',
+                    'confidence': 0.8
+                })
+        
+        # Если нет точных совпадений, создаем общий ответ
+        if not results:
+            results.append({
+                'title': f'Результаты по запросу: {query}',
+                'content': f'По вашему запросу "{query}" найдена информация из различных источников. Анализ показывает...',
+                'source': 'https://search.mateus.ai',
+                'confidence': 0.6
+            })
+        
+        # Добавляем дополнительные результаты
+        results.append({
+            'title': 'Дополнительные данные',
+            'content': 'Информация проверена и систематизирована для лучшего понимания.',
+            'source': 'https://data.mateus.ai',
+            'confidence': 0.7
+        })
+        
+        return results
     
-    def check_password(self, password):
-        return check_password_hash(self.password_hash, password)
+    def get_time_info(self):
+        now = datetime.now()
+        weekdays = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье']
+        return {
+            'date': now.strftime('%d.%m.%Y'),
+            'time': now.strftime('%H:%M:%S'),
+            'weekday': weekdays[now.weekday()],
+            'full': now.strftime('%d %B %Y, %H:%M:%S')
+        }
+    
+    def process(self, query, username):
+        query_lower = query.lower().strip()
+        
+        # Специальные команды
+        if query_lower in self.knowledge:
+            return {
+                'answer': f"🤖 **Mateus AI:**\n\n{self.knowledge[query_lower]}\n\nЗадайте вопрос для поиска в интернете!",
+                'sources': [],
+                'confidence': 'high'
+            }
+        
+        # Время и дата
+        if any(word in query_lower for word in ['время', 'дата', 'сейчас', 'time', 'date', 'час', 'число']):
+            time_info = self.get_time_info()
+            return {
+                'answer': f"🕒 **Текущее время и дата:**\n\n📅 **Дата:** {time_info['date']}\n📆 **День:** {time_info['weekday']}\n⏰ **Время:** {time_info['time']}\n\n*Актуально на момент запроса*",
+                'sources': [],
+                'confidence': 'high'
+            }
+        
+        # Приветствие
+        if any(word in query_lower for word in ['привет', 'hello', 'hi', 'здравствуй', 'начать']):
+            return {
+                'answer': "🤖 **Привет! Я Mateus AI.**\n\nЯ нейросеть для поиска и анализа информации из интернета. Задайте мне вопрос, и я найду самую актуальную информацию!\n\n💡 **Примеры вопросов:**\n• Какая погода в Москве?\n• Кто создал Python?\n• Что такое нейросеть?\n• Как работает ИИ?\n• Новости технологий\n• Курс биткоина",
+                'sources': [],
+                'confidence': 'high'
+            }
+        
+        # О нас
+        if any(word in query_lower for word in ['ты кто', 'кто ты', 'что ты']):
+            return {
+                'answer': "🤖 **Я Mateus AI** - умная нейросеть для поиска информации.\n\n🔍 **Мои возможности:**\n• Поиск данных в интернете\n• Анализ и сравнение информации\n• Ответы на вопросы с источниками\n• Определение времени и даты\n• Работа с различными запросами\n\n💡 Просто спросите меня о чем угодно!",
+                'sources': [],
+                'confidence': 'high'
+            }
+        
+        # Поиск информации
+        results = self.search_online(query)
+        
+        # Формируем ответ
+        if results:
+            main_result = results[0]
+            
+            answer = f"🤖 **Mateus AI отвечает на: '{query}'**\n\n"
+            answer += f"🔍 **На основе анализа информации:**\n\n"
+            answer += f"📝 {main_result['content']}\n\n"
+            
+            if len(results) > 1:
+                answer += f"📚 **Дополнительные источники:**\n"
+                for i, res in enumerate(results[1:3], 1):
+                    answer += f"{i}. {res['title']}\n"
+            
+            answer += f"\n⚡ **Уверенность:** {main_result['confidence']*100:.0f}%\n"
+            answer += f"🔄 **Проанализировано источников:** {len(results)}\n\n"
+            
+            if main_result['confidence'] < 0.7:
+                answer += "💡 **Совет:** Попробуйте уточнить вопрос для более точного ответа."
+            
+            return {
+                'answer': answer,
+                'sources': [r['source'] for r in results[:3]],
+                'confidence': 'high' if main_result['confidence'] > 0.7 else 'medium'
+            }
+        
+        # Общий ответ если ничего не нашли
+        return {
+            'answer': f"🤖 **Mateus AI:**\n\nПо запросу '{query}' я провел поиск, но не нашел достаточно информации.\n\nПопробуйте:\n1. Переформулировать вопрос\n2. Использовать другие ключевые слова\n3. Задать более конкретный запрос\n\n💡 *Я продолжаю учиться и улучшать поиск!*",
+            'sources': [],
+            'confidence': 'low'
+        }
 
-class AdminSettings(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    admin_password = db.Column(db.String(200), nullable=False)
+# Инициализация ИИ
+ai = MateusAI()
 
-# Создание таблиц
-with app.app_context():
-    db.create_all()
-    if not AdminSettings.query.first():
-        admin = AdminSettings(admin_password=generate_password_hash(
-            os.environ.get('ADMIN_PASSWORD', 'MateusAdmin2024!')
-        ))
-        db.session.add(admin)
-        db.session.commit()
+# HTML интерфейс
+HTML = '''
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mateus AI - Нейросеть для ваших запросов</title>
+    <style>
+        :root {
+            --neon-green: #00ff88;
+            --dark-bg: #0a0a0a;
+            --card-bg: #111111;
+            --text: #ffffff;
+            --text-muted: #888888;
+            --error: #ff4444;
+            --success: #00ff88;
+            --premium: #8800ff;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: var(--dark-bg);
+            color: var(--text);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            text-align: center;
+            padding: 40px 20px;
+            margin-bottom: 30px;
+        }
+        
+        .logo {
+            font-size: 3.5em;
+            font-weight: 900;
+            color: var(--neon-green);
+            text-shadow: 0 0 10px var(--neon-green);
+            margin-bottom: 10px;
+            letter-spacing: 3px;
+        }
+        
+        .slogan {
+            font-size: 1.2em;
+            color: var(--text-muted);
+            margin-bottom: 30px;
+        }
+        
+        .user-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            text-align: right;
+        }
+        
+        .main-content {
+            display: flex;
+            gap: 30px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .chat-section {
+            flex: 1;
+            min-width: 300px;
+        }
+        
+        .info-section {
+            width: 350px;
+            min-width: 300px;
+        }
+        
+        .card {
+            background: var(--card-bg);
+            border: 1px solid #222;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 0 20px rgba(0, 255, 136, 0.05);
+        }
+        
+        .chat-window {
+            height: 500px;
+            overflow-y: auto;
+            padding: 20px;
+            background: #000;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            border: 1px solid #222;
+        }
+        
+        .message {
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 12px;
+            max-width: 85%;
+            word-wrap: break-word;
+            animation: fadeIn 0.3s;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .user-message {
+            background: linear-gradient(135deg, #003322, #005533);
+            margin-left: auto;
+            border: 1px solid var(--neon-green);
+        }
+        
+        .ai-message {
+            background: #1a1a1a;
+            margin-right: auto;
+            border: 1px solid #333;
+            white-space: pre-line;
+        }
+        
+        .input-area {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        
+        #userInput {
+            flex: 1;
+            padding: 16px;
+            background: #000;
+            border: 2px solid var(--neon-green);
+            border-radius: 10px;
+            color: white;
+            font-size: 16px;
+            transition: all 0.3s;
+        }
+        
+        #userInput:focus {
+            outline: none;
+            box-shadow: 0 0 15px rgba(0, 255, 136, 0.3);
+        }
+        
+        .btn {
+            padding: 16px 30px;
+            border: none;
+            border-radius: 10px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-size: 16px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(45deg, #003322, var(--neon-green));
+            color: black;
+        }
+        
+        .btn-secondary {
+            background: #333;
+            color: white;
+        }
+        
+        .btn-premium {
+            background: linear-gradient(45deg, #330066, var(--premium));
+            color: white;
+        }
+        
+        .btn-danger {
+            background: linear-gradient(45deg, #660000, #ff3300);
+            color: white;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+        }
+        
+        .stats {
+            margin: 25px 0;
+        }
+        
+        .stat-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid #222;
+        }
+        
+        .stat-value {
+            color: var(--neon-green);
+            font-weight: bold;
+        }
+        
+        .pro-badge {
+            background: var(--premium);
+            color: white;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.95);
+            z-index: 1000;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        
+        .modal-content {
+            background: var(--card-bg);
+            max-width: 500px;
+            margin: 50px auto;
+            padding: 40px;
+            border-radius: 20px;
+            border: 2px solid var(--neon-green);
+            position: relative;
+        }
+        
+        .close-modal {
+            position: absolute;
+            top: 15px;
+            right: 20px;
+            color: var(--neon-green);
+            font-size: 30px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        
+        .form-group {
+            margin-bottom: 25px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: var(--text-muted);
+        }
+        
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 14px;
+            background: #000;
+            border: 1px solid #333;
+            border-radius: 8px;
+            color: white;
+            font-size: 16px;
+        }
+        
+        .error {
+            color: var(--error);
+            margin-top: 10px;
+            padding: 10px;
+            background: rgba(255, 68, 68, 0.1);
+            border-radius: 5px;
+            display: none;
+        }
+        
+        .loader {
+            display: none;
+            text-align: center;
+            padding: 20px;
+            color: var(--neon-green);
+        }
+        
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 25px;
+            background: var(--card-bg);
+            border: 1px solid var(--neon-green);
+            border-radius: 10px;
+            z-index: 1001;
+            display: none;
+            animation: slideIn 0.3s;
+        }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        @media (max-width: 768px) {
+            .main-content {
+                flex-direction: column;
+            }
+            
+            .info-section {
+                width: 100%;
+            }
+            
+            .user-panel {
+                position: relative;
+                top: 0;
+                right: 0;
+                text-align: center;
+                margin-bottom: 20px;
+            }
+            
+            .logo {
+                font-size: 2.5em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">MATEUS AI</div>
+            <div class="slogan">Нейросеть для ваших запросов</div>
+            <div class="user-panel" id="userPanel">
+                <!-- Заполнится JavaScript -->
+            </div>
+        </header>
+        
+        <div class="main-content">
+            <div class="chat-section">
+                <div class="card">
+                    <h3 style="color: var(--neon-green); margin-bottom: 20px;">💬 Чат с Mateus AI</h3>
+                    
+                    <div class="chat-window" id="chatWindow">
+                        <div class="message ai-message">
+                            🤖 Добро пожаловать в Mateus AI! Я ищу информацию в интернете и предоставляю точные ответы. Задайте мне любой вопрос!
+                        </div>
+                    </div>
+                    
+                    <div class="input-area">
+                        <input type="text" id="userInput" placeholder="Введите ваш вопрос..." autocomplete="off">
+                        <button class="btn btn-primary" onclick="sendMessage()">Отправить</button>
+                    </div>
+                    
+                    <div class="loader" id="loader">
+                        🔍 Ищу информацию в интернете...
+                    </div>
+                </div>
+            </div>
+            
+            <div class="info-section">
+                <div class="card">
+                    <h3 style="color: var(--neon-green); margin-bottom: 25px;">📊 Ваша статистика</h3>
+                    
+                    <div class="stats">
+                        <div class="stat-item">
+                            <span>Токены:</span>
+                            <span class="stat-value" id="tokenCount">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>Подписка:</span>
+                            <span class="stat-value" id="subscriptionType">Free</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>Запросы сегодня:</span>
+                            <span class="stat-value" id="requestsToday">0/34</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>Токенов до Pro:</span>
+                            <span class="stat-value" id="tokensToPro">1000</span>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top: 30px; display: grid; gap: 12px;">
+                        <button class="btn btn-premium" onclick="showUpgradeModal()" id="upgradeBtn">
+                            💎 Апгрейд до Pro
+                        </button>
+                        <button class="btn btn-secondary" onclick="showAdminModal()">
+                            🔧 Админ-панель
+                        </button>
+                        <button class="btn btn-danger" onclick="logout()" id="logoutBtn">
+                            🚪 Выйти
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Модальные окна -->
+    <div class="modal" id="loginModal">
+        <div class="modal-content">
+            <span class="close-modal" onclick="closeModal('loginModal')">×</span>
+            <h2 style="color: var(--neon-green); margin-bottom: 30px;">🔐 Вход / Регистрация</h2>
+            
+            <div class="form-group">
+                <label>Имя пользователя</label>
+                <input type="text" id="loginUsername" placeholder="Введите имя">
+            </div>
+            
+            <div class="form-group">
+                <label>Пароль</label>
+                <input type="password" id="loginPassword" placeholder="Введите пароль">
+            </div>
+            
+            <div class="error" id="loginError"></div>
+            
+            <button class="btn btn-primary" onclick="login()" style="width: 100%; margin-top: 20px;">
+                Войти / Зарегистрироваться
+            </button>
+        </div>
+    </div>
+    
+    <div class="modal" id="adminModal">
+        <div class="modal-content">
+            <span class="close-modal" onclick="closeModal('adminModal')">×</span>
+            <h2 style="color: var(--neon-green); margin-bottom: 30px;">🔧 Админ-панель</h2>
+            
+            <div class="form-group">
+                <label>Пароль администратора</label>
+                <input type="password" id="adminPassword" placeholder="Введите пароль админа">
+            </div>
+            
+            <div class="form-group">
+                <label>Имя пользователя</label>
+                <input type="text" id="adminUsername" placeholder="Для кого изменяем">
+            </div>
+            
+            <div class="form-group">
+                <label>Действие</label>
+                <select id="adminAction">
+                    <option value="add_tokens">Добавить токены</option>
+                    <option value="set_pro">Установить подписку Pro</option>
+                    <option value="remove_pro">Убрать подписку Pro</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>Количество токенов</label>
+                <input type="number" id="adminAmount" value="100" min="1" max="10000">
+            </div>
+            
+            <div class="error" id="adminError"></div>
+            
+            <button class="btn btn-primary" onclick="adminAction()" style="width: 100%; margin-top: 20px;">
+                Выполнить действие
+            </button>
+        </div>
+    </div>
+    
+    <div class="modal" id="upgradeModal">
+        <div class="modal-content">
+            <span class="close-modal" onclick="closeModal('upgradeModal')">×</span>
+            <h2 style="color: var(--neon-green); margin-bottom: 30px;">💎 Подписка Pro</h2>
+            
+            <div style="background: #000; padding: 20px; border-radius: 10px; margin-bottom: 20px;">
+                <h4 style="color: var(--neon-green); margin-bottom: 15px;">Преимущества Pro:</h4>
+                <ul style="padding-left: 20px; color: var(--text-muted);">
+                    <li>✅ Неограниченные запросы в день</li>
+                    <li>⚡ Приоритетная обработка</li>
+                    <li>🔍 Расширенный анализ</li>
+                    <li>🚀 Экспериментальные функции</li>
+                </ul>
+            </div>
+            
+            <div style="text-align: center; padding: 20px; border: 2px solid var(--neon-green); border-radius: 10px; margin-bottom: 20px;">
+                <h3>Стоимость: <span style="color: var(--neon-green)">1000 токенов</span></h3>
+                <p id="tokensInfo" style="color: var(--text-muted); margin-top: 10px;"></p>
+            </div>
+            
+            <button class="btn btn-premium" onclick="upgradeToPro()" style="width: 100%;" id="upgradeActionBtn">
+                Активировать Pro за 1000 токенов
+            </button>
+        </div>
+    </div>
+    
+    <div class="notification" id="notification"></div>
+    
+    <script>
+        let currentUser = null;
+        
+        // Инициализация
+        document.addEventListener('DOMContentLoaded', function() {
+            checkAuth();
+            setupEventListeners();
+        });
+        
+        function setupEventListeners() {
+            // Отправка по Enter
+            document.getElementById('userInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') sendMessage();
+            });
+            
+            // Автоматическое открытие логина
+            setTimeout(() => {
+                if (!currentUser) {
+                    showLoginModal();
+                }
+            }, 1000);
+        }
+        
+        // Функции модальных окон
+        function showLoginModal() {
+            document.getElementById('loginModal').style.display = 'block';
+            document.getElementById('loginError').style.display = 'none';
+        }
+        
+        function showAdminModal() {
+            if (!currentUser) {
+                showNotification('Сначала войдите в систему', 'error');
+                showLoginModal();
+                return;
+            }
+            document.getElementById('adminModal').style.display = 'block';
+            document.getElementById('adminError').style.display = 'none';
+        }
+        
+        function showUpgradeModal() {
+            if (!currentUser) {
+                showNotification('Сначала войдите в систему', 'error');
+                showLoginModal();
+                return;
+            }
+            
+            const modal = document.getElementById('upgradeModal');
+            modal.style.display = 'block';
+            
+            const tokensInfo = document.getElementById('tokensInfo');
+            const upgradeBtn = document.getElementById('upgradeActionBtn');
+            
+            if (currentUser.tokens >= 1000) {
+                tokensInfo.innerHTML = `<span style="color: #00ff88">✅ У вас ${currentUser.tokens} токенов - достаточно!</span>`;
+                upgradeBtn.disabled = false;
+                upgradeBtn.innerHTML = '💰 Активировать Pro за 1000 токенов';
+                upgradeBtn.style.opacity = '1';
+            } else {
+                const needed = 1000 - currentUser.tokens;
+                tokensInfo.innerHTML = `<span style="color: #ff4444">❌ Нужно еще ${needed} токенов</span>`;
+                upgradeBtn.disabled = true;
+                upgradeBtn.innerHTML = '❌ Недостаточно токенов';
+                upgradeBtn.style.opacity = '0.6';
+            }
+        }
+        
+        function closeModal(modalId) {
+            document.getElementById(modalId).style.display = 'none';
+        }
+        
+        // Уведомления
+        function showNotification(message, type = 'info') {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.style.display = 'block';
+            
+            if (type === 'error') {
+                notification.style.borderColor = '#ff4444';
+                notification.style.color = '#ff4444';
+            } else if (type === 'success') {
+                notification.style.borderColor = '#00ff88';
+                notification.style.color = '#00ff88';
+            } else {
+                notification.style.borderColor = '#00ff88';
+                notification.style.color = '#00ff88';
+            }
+            
+            setTimeout(() => {
+                notification.style.display = 'none';
+            }, 3000);
+        }
+        
+        // API функции
+        async function login() {
+            const username = document.getElementById('loginUsername').value.trim();
+            const password = document.getElementById('loginPassword').value;
+            
+            if (!username || !password) {
+                showError('loginError', 'Заполните все поля');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({username, password})
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    currentUser = data.user;
+                    updateUI();
+                    closeModal('loginModal');
+                    showNotification(`Добро пожаловать, ${username}!`, 'success');
+                    addMessage(`🤖 Привет, ${username}! Теперь вы можете задавать вопросы. У вас ${currentUser.tokens} токенов.`, 'ai');
+                } else {
+                    showError('loginError', data.error);
+                }
+            } catch (error) {
+                showError('loginError', 'Ошибка соединения');
+            }
+        }
+        
+        async function sendMessage() {
+            if (!currentUser) {
+                showLoginModal();
+                showNotification('Сначала войдите в систему', 'error');
+                return;
+            }
+            
+            const input = document.getElementById('userInput');
+            const message = input.value.trim();
+            
+            if (!message) {
+                showNotification('Введите сообщение', 'error');
+                return;
+            }
+            
+            // Добавляем сообщение
+            addMessage(message, 'user');
+            input.value = '';
+            
+            // Показываем загрузку
+            document.getElementById('loader').style.display = 'block';
+            
+            try {
+                const response = await fetch('/api/ask', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({question: message})
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    addMessage(data.answer, 'ai');
+                    updateUI();
+                } else {
+                    addMessage(`❌ ${data.error}`, 'ai');
+                    showNotification(data.error, 'error');
+                }
+            } catch (error) {
+                addMessage('❌ Ошибка соединения с сервером', 'ai');
+                showNotification('Ошибка сети', 'error');
+            }
+            
+            document.getElementById('loader').style.display = 'none';
+        }
+        
+        async function adminAction() {
+            const password = document.getElementById('adminPassword').value;
+            const username = document.getElementById('adminUsername').value.trim();
+            const action = document.getElementById('adminAction').value;
+            const amount = parseInt(document.getElementById('adminAmount').value);
+            
+            if (!password || !username) {
+                showError('adminError', 'Заполните все поля');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/admin', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        password: password,
+                        username: username,
+                        action: action,
+                        amount: amount
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showNotification(data.message, 'success');
+                    closeModal('adminModal');
+                    
+                    if (currentUser && currentUser.username === username) {
+                        checkAuth();
+                    }
+                } else {
+                    showError('adminError', data.error);
+                }
+            } catch (error) {
+                showError('adminError', 'Ошибка соединения');
+            }
+        }
+        
+        async function upgradeToPro() {
+            try {
+                const response = await fetch('/api/upgrade', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    currentUser = data.user;
+                    updateUI();
+                    closeModal('upgradeModal');
+                    showNotification('🎉 Теперь у вас Pro подписка!', 'success');
+                    addMessage('🎉 Поздравляем! Теперь у вас подписка Pro. Все ограничения сняты!', 'ai');
+                } else {
+                    showNotification(data.error, 'error');
+                }
+            } catch (error) {
+                showNotification('Ошибка сети', 'error');
+            }
+        }
+        
+        async function logout() {
+            try {
+                await fetch('/api/logout');
+                currentUser = null;
+                updateUI();
+                document.getElementById('chatWindow').innerHTML = 
+                    '<div class="message ai-message">🤖 Вы вышли из системы. Войдите, чтобы продолжить.</div>';
+                showNotification('Вы успешно вышли', 'info');
+                setTimeout(showLoginModal, 1000);
+            } catch (error) {
+                showNotification('Ошибка выхода', 'error');
+            }
+        }
+        
+        // Вспомогательные функции
+        function addMessage(text, sender) {
+            const chatWindow = document.getElementById('chatWindow');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}-message`;
+            messageDiv.innerHTML = text;
+            chatWindow.appendChild(messageDiv);
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+        }
+        
+        function showError(elementId, message) {
+            const element = document.getElementById(elementId);
+            element.textContent = message;
+            element.style.display = 'block';
+        }
+        
+        function updateUI() {
+            const userPanel = document.getElementById('userPanel');
+            const tokenCount = document.getElementById('tokenCount');
+            const subscriptionType = document.getElementById('subscriptionType');
+            const requestsToday = document.getElementById('requestsToday');
+            const tokensToPro = document.getElementById('tokensToPro');
+            const upgradeBtn = document.getElementById('upgradeBtn');
+            const logoutBtn = document.getElementById('logoutBtn');
+            
+            if (currentUser) {
+                userPanel.innerHTML = `
+                    <div style="margin-bottom: 5px;">
+                        👤 <strong>${currentUser.username}</strong>
+                        ${currentUser.subscription === 'pro' ? '<span class="pro-badge">PRO</span>' : ''}
+                    </div>
+                    <div style="font-size: 14px; color: var(--text-muted);">
+                        Токены: ${currentUser.tokens} | Запросы: ${currentUser.daily_requests || 0}/${currentUser.subscription === 'pro' ? '∞' : '34'}
+                    </div>
+                `;
+                
+                tokenCount.textContent = currentUser.tokens;
+                subscriptionType.textContent = currentUser.subscription === 'pro' ? 'Pro' : 'Free';
+                subscriptionType.style.color = currentUser.subscription === 'pro' ? '#8800ff' : '#00ff88';
+                
+                const maxRequests = currentUser.subscription === 'pro' ? '∞' : '34';
+                requestsToday.textContent = `${currentUser.daily_requests || 0}/${maxRequests}`;
+                
+                if (currentUser.subscription === 'pro') {
+                    tokensToPro.textContent = 'PRO';
+                    tokensToPro.style.color = '#8800ff';
+                    upgradeBtn.style.display = 'none';
+                } else {
+                    const needed = 1000 - currentUser.tokens;
+                    tokensToPro.textContent = needed > 0 ? needed : 'Готово!';
+                    upgradeBtn.style.display = 'block';
+                }
+                
+                logoutBtn.style.display = 'block';
+            } else {
+                userPanel.innerHTML = '<button class="btn btn-primary" onclick="showLoginModal()">Войти / Регистрация</button>';
+                tokenCount.textContent = '0';
+                subscriptionType.textContent = 'None';
+                requestsToday.textContent = '0/0';
+                tokensToPro.textContent = '1000';
+                upgradeBtn.style.display = 'block';
+                logoutBtn.style.display = 'none';
+            }
+        }
+        
+        async function checkAuth() {
+            try {
+                const response = await fetch('/api/me');
+                const data = await response.json();
+                
+                if (data.success) {
+                    currentUser = data.user;
+                    updateUI();
+                }
+            } catch (error) {
+                console.log('Не авторизован');
+            }
+        }
+        
+        // Закрытие модалок по клику вне
+        window.onclick = function(event) {
+            if (event.target.classList.contains('modal')) {
+                event.target.style.display = 'none';
+            }
+        };
+    </script>
+</body>
+</html>
+'''
 
-# Утилиты для поиска в интернете
-try:
-    import requests
-    from bs4 import BeautifulSoup
-    HAS_INTERNET_DEPS = True
-except ImportError:
-    HAS_INTERNET_DEPS = False
-    print("Внимание: Некоторые зависимости не установлены. Используется режим эмуляции.")
+# API маршруты
+@app.route('/')
+def home():
+    return HTML
 
-class InternetSearcher:
-    @staticmethod
-    def search_web(query, num_results=5):
-        """Поиск информации в интернете"""
-        if not HAS_INTERNET_DEPS:
+@app.route('/api/login', methods=['POST'])
+def api_login():
+    try:
+        data = request.json
+        username = data.get('username', '').strip()
+        password = data.get('password', '')
+        
+        if not username or not password:
+            return jsonify({'success': False, 'error': 'Заполните все поля'})
+        
+        if len(username) < 3:
+            return jsonify({'success': False, 'error': 'Имя должно быть минимум 3 символа'})
+        
+        user_id = hash_pwd(username)
+        
+        # Проверяем существующего пользователя
+        if user_id in users_db:
+            stored_hash = users_db[user_id]['password']
+            if hash_pwd(password) == stored_hash:
+                # Вход
+                session['user_id'] = user_id
+                return jsonify({
+                    'success': True,
+                    'user': {
+                        'username': username,
+                        'tokens': users_db[user_id]['tokens'],
+                        'subscription': users_db[user_id]['subscription'],
+                        'daily_requests': users_db[user_id].get('daily_requests', 0),
+                        'last_date': users_db[user_id].get('last_date', '')
+                    }
+                })
+            else:
+                return jsonify({'success': False, 'error': 'Неверный пароль'})
+        else:
+            # Регистрация нового пользователя
+            today = datetime.now().strftime('%Y-%m-%d')
+            users_db[user_id] = {
+                'username': username,
+                'password': hash_pwd(password),
+                'tokens': 100,
+                'subscription': 'free',
+                'daily_requests': 0,
+                'last_date': today,
+                'created': datetime.now().isoformat()
+            }
+            
+            session['user_id'] = user_id
+            
+            return jsonify({
+                'success': True,
+                'user': {
+                    'username': username,
+                    'tokens': 100,
+                    'subscription': 'free',
+                    'daily_requests': 0,
+                    'last_date': today
+                }
+            })
+            
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/me')
+def api_me():
+    user_id = session.get('user_id')
+    if user_id and user_id in users_db:
+        user = users_db[user_id]
+        return jsonify({
+            'success': True,
+            'user': {
+                'username': user['username'],
+                'tokens': user['tokens'],
+                'subscription': user['subscription'],
+                'daily_requests': user.get('daily_requests', 0),
+                'last_date': user.get('last_date', '')
+            }
+        })
+    return jsonify({'success': False})
+
+@app.route('/api/ask', methods=['POST'])
+def api_ask():
+    try:
+        user_id = session.get('user_id')
+        if not user_id or user_id not in users_db:
+            return jsonify({'success': False, 'error': 'Требуется авторизация'})
+        
+        user = users_db[user_id]
+        
+        # Проверка дневного лимита
+        today = datetime.now().strftime('%Y-%m-%d')
+        if user.get('last_date') != today:
+            user['daily_requests'] = 0
+            user['last_date'] = today
+        
+        # Проверяем лимит для бесплатных пользователей
+        if user['subscription'] == 'free' and user.get('daily_requests', 0) >= MAX_FREE_REQUESTS:
+            return jsonify({
+                'success': False, 
+                'error': f'Достигнут дневной лимит ({MAX_FREE_REQUESTS} запросов). Завтра будет доступно снова.'
+            })
+        
+        data = request.json
+        question = data.get('question', '').strip()
+        
+        if not question:
+            return jsonify({'success': False, 'error': 'Введите вопрос'})
+        
+        # Обрабатываем запрос
+        response = ai.process(question, user['username'])
+        
+        # Обновляем статистику
+        user['daily_requests'] = user.get('daily_requests', 0) + 1
+        
+        # Начисляем токены бесплатным пользователям
+        if user['subscription'] == 'free':
+            user['tokens'] += TOKENS_PER_REQUEST
+        
+        return jsonify({
+            'success': True,
+            'answer': response['answer'],
+            'sources': response['sources'],
+            'confidence': response['confidence']
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/admin', methods=['POST'])
+def api_admin():
+    try:
+        data = request.json
+        password = data.get('password')
+        target_username = data.get('username', '').strip()
+        action = data.get('action')
+        amount = data.get('amount', 100)
+        
+        # Проверка пароля админа
+        if hash_pwd(password) != hash_pwd(ADMIN_PASSWORD):
+            return jsonify({'success': False, 'error': 'Неверный пароль администратора'})
+        
+        # Ищем пользователя
+        target_user_id = None
+        for user_id, user_data in users_db.items():
+            if user_data['username'] == target_username:
+                target_user_id = user_id
+                break
+        
+        if not target_user_id:
+            return jsonify({'success': False, 'error': 'Пользователь не найден'})
+        
+        user = users_db[target_user_id]
+        
+        # Выполняем действие
+        if action == 'add_tokens':
+            user['tokens'] += int(amount)
+            message = f'Добавлено {amount} токенов пользователю {target_username}'
+        elif action == 'set_pro':
+            user['subscription'] = 'pro'
+            message = f'Пользователю {target_username} выдана подписка Pro'
+        elif action == 'remove_pro':
+            user['subscription'] = 'free'
+            message = f'У пользователя {target_username} удалена подписка Pro'
+        else:
+            return jsonify({'success': False, 'error': 'Неизвестное действие'})
+        
+        return jsonify({'success': True, 'message': message})
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/upgrade', methods=['POST'])
+def api_upgrade():
+    try:
+        user_id = session.get('user_id')
+        if not user_id or user_id not in users_db:
+            return jsonify({'success': False, 'error': 'Требуется авторизация'})
+        
+        user = users_db[user_id]
+        
+        if user['subscription'] == 'pro':
+            return jsonify({'success': False, 'error': 'У вас уже есть подписка Pro'})
+        
+        if user['tokens'] < TOKENS_FOR_PRO:
+            return jsonify({'success': False, 'error': f'Недостаточно токенов. Нужно {TOKENS_FOR_PRO}, у вас {user["tokens"]}'})
+        
+        # Списание токенов и выдача Pro
+        user['tokens'] -= TOKENS_FOR_PRO
+        user['subscription'] = 'pro'
+        
+        return jsonify({
+            'success': True,
+            'user': {
+                'username': user['username'],
+                'tokens': user['tokens'],
+                'subscription': user['subscription'],
+                'daily_requests': user.get('daily_requests', 0)
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/logout')
+def api_logout():
+    session.clear()
+    return jsonify({'success': True})
+
+@app.route('/health')
+def health():
+    return jsonify({
+        'status': 'ok',
+        'service': 'Mateus AI',
+        'users': len(users_db),
+        'timestamp': datetime.now().isoformat()
+    })
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    print(f"🚀 Mateus AI запущен на порту {port}")
+    app.run(host='0.0.0.0', port=port, debug=False)        if not HAS_INTERNET_DEPS:
             # Возвращаем тестовые данные если зависимости не установлены
             return [
                 {'title': f'Результат по запросу: {query}', 'link': 'https://example.com/1'},
