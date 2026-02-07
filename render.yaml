@@ -3,7 +3,7 @@ services:
     name: mateus-ai
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python mateus_ai.py
+startCommand: python mateusai.py  # а не python mateus_ai.py
     envVars:
       - key: SECRET_KEY
         generateValue: true
