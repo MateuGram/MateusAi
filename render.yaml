@@ -3,13 +3,15 @@ services:
     name: mateus-ai
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn mateusai:app
+    startCommand: python mateus_ai.py
     envVars:
       - key: SECRET_KEY
         generateValue: true
-      - key: DEEPSEEK_API_KEY
-        sync: false
       - key: ADMIN_PASSWORD
         sync: false
       - key: PORT
         value: 10000
+    disk:
+      name: mateus-data
+      mountPath: /opt/render/project/src
+      sizeGB: 1
