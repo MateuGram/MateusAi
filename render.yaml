@@ -3,15 +3,10 @@ services:
     name: mateus-ai
     env: python
     buildCommand: pip install -r requirements.txt
-startCommand: python mateusai.py  # а не python mateus_ai.py
+    startCommand: python mateusai.py
     envVars:
-      - key: SECRET_KEY
-        generateValue: true
       - key: ADMIN_PASSWORD
         sync: false
-      - key: PORT
-        value: 10000
-    disk:
-      name: mateus-data
-      mountPath: /opt/render/project/src
-      sizeGB: 1
+      - key: SECRET_KEY
+        generateValue: true
+    plan: free
