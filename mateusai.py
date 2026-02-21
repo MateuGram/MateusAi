@@ -2,7 +2,6 @@ import os
 import requests
 import json
 import time
-import threading
 from flask import Flask, request, jsonify, render_template_string
 from flask_cors import CORS
 from bs4 import BeautifulSoup
@@ -14,8 +13,8 @@ CORS(app)
 OLLAMA_API_KEY = "cabb2fcef2e249fcb03c5cb80a47fb89.xfcCSfYXoLYnyDdZWoIwyY38"
 OLLAMA_URL = "https://api.ollama.ai/v1/completions"
 
-# Хранилище истории чата
-chat_history = []
+# История диалога
+conversation_history = []
 
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
@@ -195,27 +194,20 @@ HTML_TEMPLATE = '''
             transform: none;
         }
         
-        .sources {
-            font-size: 12px;
-            margin-top: 10px;
-            padding-top: 10px;
-            border-top: 1px solid #eee;
-            color: #666;
-        }
-        
-        .sources a {
-            color: #667eea;
-            text-decoration: none;
-        }
-        
-        .sources a:hover {
-            text-decoration: underline;
-        }
-        
         .status-badge {
             display: inline-block;
             padding: 3px 8px;
             background: #4caf50;
+            color: white;
+            border-radius: 12px;
+            font-size: 11px;
+            margin-left: 10px;
+        }
+        
+        .internet-badge {
+            display: inline-block;
+            padding: 3px 8px;
+            background: #ff9800;
             color: white;
             border-radius: 12px;
             font-size: 11px;
@@ -226,16 +218,23 @@ HTML_TEMPLATE = '''
 <body>
     <div class="chat-container">
         <div class="chat-header">
-            <h1>MateusAI <span class="status-badge">Online</span></h1>
+            <h1>MateusAI 
+                <span class="status-badge">Online</span>
+                <span class="internet-badge">Internet</span>
+            </h1>
             <p>ИИ с доступом в интернет • Задавай любые вопросы</p>
         </div>
         
         <div class="chat-messages" id="chatMessages">
             <div class="message bot-message">
                 <div class="message-content">
-                    Привет! Я MateusAI - твой умный помощник с доступом в интернет. 
-                    Могу искать информацию, отвечать на вопросы и выполнять задачи. 
-                    Что хочешь узнать? 🌟
+                    👋 Привет! Я MateusAI - твой умный помощник с доступом в интернет.<br><br>
+                    Я могу:<br>
+                    • Отвечать на любые вопросы<br>
+                    • Искать информацию в интернете<br>
+                    • Помогать с задачами<br>
+                    • Вести обычный диалог<br><br>
+                    Чем я могу помочь? 🌟
                     <div class="message-time">{{ current_time }}</div>
                 </div>
             </div>
@@ -250,7 +249,7 @@ HTML_TEMPLATE = '''
     <script>
         let isTyping = false;
         
-        function addMessage(text, isUser, sources = null) {
+        function addMessage(text, isUser) {
             const messagesDiv = document.getElementById('chatMessages');
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${isUser ? 'user-message' : 'bot-message'}`;
@@ -260,23 +259,12 @@ HTML_TEMPLATE = '''
                 minute: '2-digit' 
             });
             
-            let messageHTML = `
+            messageDiv.innerHTML = `
                 <div class="message-content">
                     ${text}
                     <div class="message-time">${time}</div>
+                </div>
             `;
-            
-            if (sources) {
-                messageHTML += `
-                    <div class="sources">
-                        <strong>Источники:</strong><br>
-                        ${sources}
-                    </div>
-                `;
-            }
-            
-            messageHTML += `</div>`;
-            messageDiv.innerHTML = messageHTML;
             
             messagesDiv.appendChild(messageDiv);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
@@ -323,13 +311,13 @@ HTML_TEMPLATE = '''
             showTypingIndicator();
             
             try {
-                // Отправляем запрос к нашему API
-                const response = await fetch('/ask', {
+                // Отправляем запрос к API
+                const response = await fetch('/chat', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ question: message })
+                    body: JSON.stringify({ message: message })
                 });
                 
                 const data = await response.json();
@@ -337,16 +325,8 @@ HTML_TEMPLATE = '''
                 // Убираем индикатор печати
                 removeTypingIndicator();
                 
-                // Форматируем источники
-                let sourcesHTML = '';
-                if (data.sources && data.sources.length > 0) {
-                    sourcesHTML = data.sources.map(s => 
-                        `<a href="${s.url}" target="_blank">${s.title}</a>`
-                    ).join('<br>');
-                }
-                
                 // Добавляем ответ бота
-                addMessage(data.answer, false, sourcesHTML);
+                addMessage(data.response, false);
                 
             } catch (error) {
                 removeTypingIndicator();
@@ -381,7 +361,7 @@ def fetch_web_content(url):
         chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
         text = ' '.join(chunk for chunk in chunks if chunk)
         
-        return text[:3000]
+        return text[:2000]
     except:
         return ""
 
@@ -394,7 +374,7 @@ def search_web(query):
         soup = BeautifulSoup(response.text, 'html.parser')
         
         results = []
-        for g in soup.find_all('div', class_='g')[:3]:
+        for g in soup.find_all('div', class_='g')[:2]:
             title = g.find('h3')
             link = g.find('a')
             if title and link:
@@ -409,32 +389,114 @@ def search_web(query):
     except:
         return []
 
-def process_with_ollama(prompt, context=""):
-    """Обработка через Ollama"""
+def needs_internet_search(message):
+    """Проверяет, нужен ли поиск в интернете"""
+    search_keywords = ['найди', 'поищи', 'сколько', 'кто такой', 'что такое', 
+                      'новости', 'погода', 'курс', 'цена', 'как', 'почему',
+                      'когда', 'где', 'последние', 'свежие', 'сегодня']
+    
+    message_lower = message.lower()
+    for keyword in search_keywords:
+        if keyword in message_lower:
+            return True
+    return False
+
+def get_ai_response(message):
+    """Получение ответа от AI"""
+    global conversation_history
+    
+    # Добавляем сообщение в историю
+    conversation_history.append({"role": "user", "content": message})
+    
+    # Проверяем, нужен ли поиск
+    if needs_internet_search(message):
+        search_results = search_web(message)
+        web_context = ""
+        
+        if search_results:
+            web_context = fetch_web_content(search_results[0]['url'])
+            context = f"Вот информация из интернета по запросу: {web_context}\n\n"
+        else:
+            context = "Не удалось найти информацию в интернете.\n\n"
+    else:
+        context = ""
+        search_results = []
+    
     try:
+        # Формируем промпт с контекстом диалога
+        history_text = ""
+        for msg in conversation_history[-6:]:  # Последние 6 сообщений
+            role = "Человек" if msg["role"] == "user" else "Ты"
+            history_text += f"{role}: {msg['content']}\n"
+        
+        full_prompt = f"""Ты дружелюбный AI помощник MateusAI. Отвечай как человек, поддерживай диалог.
+        
+История диалога:
+{history_text}
+
+{context}Твой ответ (естественно, по-русски):"""
+
         headers = {
             'Authorization': f'Bearer {OLLAMA_API_KEY}',
             'Content-Type': 'application/json'
         }
         
-        full_prompt = f"Контекст из интернета:\n{context}\n\nВопрос: {prompt}\n\nОтвет (на русском, подробно):"
-        
         data = {
             "model": "llama2",
             "prompt": full_prompt,
-            "max_tokens": 500,
-            "temperature": 0.7
+            "max_tokens": 300,
+            "temperature": 0.8
         }
         
         response = requests.post(OLLAMA_URL, headers=headers, json=data, timeout=30)
         
         if response.status_code == 200:
-            return response.json().get('choices', [{}])[0].get('text', 'Нет ответа')
+            ai_response = response.json().get('choices', [{}])[0].get('text', '')
+            if not ai_response:
+                ai_response = get_fallback_response(message)
         else:
-            return f"Вот что я нашел по запросу '{prompt}'. (Использую локальный режим)"
+            ai_response = get_fallback_response(message)
             
     except:
-        return f"Ищу информацию по вашему вопросу: '{prompt}'..."
+        ai_response = get_fallback_response(message)
+    
+    # Добавляем ответ в историю
+    conversation_history.append({"role": "assistant", "content": ai_response})
+    
+    return ai_response
+
+def get_fallback_response(message):
+    """Запасные ответы если API недоступен"""
+    message_lower = message.lower()
+    
+    # Приветствия
+    if message_lower in ['привет', 'здравствуй', 'хай', 'hello', 'hi']:
+        return "Привет! Как дела? Чем могу помочь?"
+    
+    # Как дела
+    if 'как дела' in message_lower:
+        return "У меня всё отлично! Рад общаться с тобой. А у тебя как?"
+    
+    # Что делаешь
+    if 'что делаешь' in message_lower:
+        return "Общаюсь с тобой и помогаю с вопросами! Есть что-то интересное?"
+    
+    # Пока/до свидания
+    if message_lower in ['пока', 'до свидания', 'bye']:
+        return "Пока! Буду рад снова помочь. Обращайся!"
+    
+    # Спасибо
+    if 'спасибо' in message_lower:
+        return "Пожалуйста! Рад помочь. Ещё что-то?"
+    
+    # Короткие сообщения
+    if len(message) < 5:
+        return "Да? Расскажи подробнее, я слушаю!"
+    
+    if '?' in message:
+        return "Интересный вопрос! Дай подумать... Возможно, мне нужно поискать в интернете. Могу я поискать информацию для тебя?"
+    
+    return f"Понял тебя! Расскажи подробнее о '{message}', чтобы я мог лучше помочь."
 
 @app.route('/')
 def home():
@@ -442,40 +504,19 @@ def home():
     current_time = datetime.now().strftime("%H:%M")
     return render_template_string(HTML_TEMPLATE, current_time=current_time)
 
-@app.route('/ask', methods=['POST'])
-def ask():
+@app.route('/chat', methods=['POST'])
+def chat():
     data = request.json
-    question = data.get('question', '')
+    message = data.get('message', '')
     
-    if not question:
-        return jsonify({'error': 'Укажите вопрос'}), 400
+    if not message:
+        return jsonify({'error': 'Укажите сообщение'}), 400
     
-    # Поиск в интернете
-    search_results = search_web(question)
-    web_context = ""
-    
-    if search_results:
-        web_context = fetch_web_content(search_results[0]['url'])
-    
-    # Ответ AI
-    answer = process_with_ollama(question, web_context)
+    response = get_ai_response(message)
     
     return jsonify({
-        'question': question,
-        'answer': answer,
-        'sources': search_results
+        'response': response
     })
-
-@app.route('/search', methods=['POST'])
-def search():
-    data = request.json
-    query = data.get('query', '')
-    
-    if not query:
-        return jsonify({'error': 'Укажите query'}), 400
-    
-    results = search_web(query)
-    return jsonify({'query': query, 'results': results})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
