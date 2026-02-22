@@ -7,8 +7,8 @@ app = Flask(__name__)
 # Твой Hugging Face токен
 HF_TOKEN = "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"
 
-# Работающие бесплатные модели
-CURRENT_MODEL = "facebook/blenderbot-400M-distill"  # Лучше для чата
+# Модель
+CURRENT_MODEL = "facebook/blenderbot-400M-distill"
 
 HTML = '''
 <!DOCTYPE html>
@@ -35,6 +35,236 @@ HTML = '''
             border-radius: 20px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
             overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        .header h2 {
+            margin: 0;
+            font-size: 24px;
+        }
+        .messages { 
+            height: 400px; 
+            overflow-y: auto; 
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .message {
+            margin-bottom: 15px;
+            display: flex;
+        }
+        .user-message {
+            justify-content: flex-end;
+        }
+        .bot-message {
+            justify-content: flex-start;
+        }
+        .message-content {
+            max-width: 70%;
+            padding: 10px 15px;
+            border-radius: 18px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .user-message .message-content {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-bottom-right-radius: 5px;
+        }
+        .bot-message .message-content {
+            background: white;
+            color: #333;
+            border-bottom-left-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .input-area {
+            padding: 20px;
+            background: white;
+            border-top: 1px solid #eee;
+            display: flex;
+            gap: 10px;
+        }
+        input { 
+            flex: 1;
+            padding: 12px 18px;
+            border: 2px solid #eee;
+            border-radius: 25px;
+            font-size: 14px;
+            outline: none;
+        }
+        input:focus {
+            border-color: #667eea;
+        }
+        button { 
+            padding: 12px 25px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 25px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .typing {
+            display: flex;
+            padding: 10px 15px;
+            background: white;
+            border-radius: 18px;
+            width: fit-content;
+        }
+        .typing span {
+            width: 8px;
+            height: 8px;
+            background: #999;
+            border-radius: 50%;
+            margin: 0 2px;
+            animation: typing 1.4s infinite;
+        }
+        .typing span:nth-child(2) { animation-delay: 0.2s; }
+        .typing span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes typing {
+            0%, 60%, 100% { transform: translateY(0); }
+            30% { transform: translateY(-10px); }
+        }
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            background: #ff9800;
+            color: white;
+            border-radius: 12px;
+            font-size: 11px;
+            margin-left: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="chat">
+        <div class="header">
+            <h2>MateusAI <span class="badge">Hugging Face</span></h2>
+            <p>Чат с искусственным интеллектом</p>
+        </div>
+        
+        <div class="messages" id="messages">
+            <div class="message bot-message">
+                <div class="message-content">
+                    👋 Привет! Я MateusAI. Задавай любые вопросы! 
+                </div>
+            </div>
+        </div>
+        
+        <div class="input-area">
+            <input type="text" id="input" placeholder="Напиши сообщение..." onkeypress="if(event.key==='Enter') send()">
+            <button onclick="send()" id="sendBtn">Отправить</button>
+        </div>
+    </div>
+
+    <script>
+        let isWaiting = false;
+        
+        async function send() {
+            const input = document.getElementById('input');
+            const msg = input.value.trim();
+            if (!msg || isWaiting) return;
+            
+            addMessage(msg, true);
+            input.value = '';
+            
+            showTyping();
+            isWaiting = true;
+            document.getElementById('sendBtn').disabled = true;
+            
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({message: msg})
+                });
+                
+                const data = await response.json();
+                hideTyping();
+                addMessage(data.response, false);
+                
+            } catch (error) {
+                hideTyping();
+                addMessage('Ошибка. Попробуй ещё раз.', false);
+            }
+            
+            isWaiting = false;
+            document.getElementById('sendBtn').disabled = false;
+        }
+        
+        function addMessage(text, isUser) {
+            const messages = document.getElementById('messages');
+            const div = document.createElement('div');
+            div.className = `message ${isUser ? 'user-message' : 'bot-message'}`;
+            
+            const time = new Date().toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'});
+            
+            div.innerHTML = `<div class="message-content">${text}<div style="font-size:10px; opacity:0.6; margin-top:5px; text-align:right">${time}</div></div>`;
+            messages.appendChild(div);
+            messages.scrollTop = messages.scrollHeight;
+        }
+        
+        function showTyping() {
+            const messages = document.getElementById('messages');
+            const div = document.createElement('div');
+            div.className = 'message bot-message';
+            div.id = 'typing';
+            div.innerHTML = '<div class="typing"><span></span><span></span><span></span></div>';
+            messages.appendChild(div);
+            messages.scrollTop = messages.scrollHeight;
+        }
+        
+        function hideTyping() {
+            const typing = document.getElementById('typing');
+            if (typing) typing.remove();
+        }
+    </script>
+</body>
+</html>
+'''
+
+@app.route('/')
+def home():
+    return render_template_string(HTML)
+
+@app.route('/chat', methods=['POST'])
+def chat():
+    data = request.json
+    user_message = data.get('message', '')
+    
+    try:
+        response = requests.post(
+            f"https://api-inference.huggingface.co/models/{CURRENT_MODEL}",
+            headers={"Authorization": f"Bearer {HF_TOKEN}"},
+            json={"inputs": user_message},
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            if isinstance(result, list) and len(result) > 0:
+                if isinstance(result[0], dict) and 'generated_text' in result[0]:
+                    ai_response = result[0]['generated_text']
+                else:
+                    ai_response = str(result[0])
+            else:
+                ai_response = str(result)
+        elif response.status_code == 503:
+            ai_response = "Модель загружается... Подожди 10 секунд и попробуй снова."
+        else:
+            ai_response = f"Ошибка API: {response.status_code}"
+            
+    except Exception as e:
+        ai_response = f"Ошибка: {str(e)}"
+    
+    return jsonify({"response": ai_response})
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)            overflow: hidden;
         }
         .header {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
