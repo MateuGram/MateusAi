@@ -7,17 +7,19 @@ app = Flask(__name__)
 # Твой Hugging Face токен
 HF_TOKEN = "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"
 
-# Доступные модели
-MODELS = {
+# Переменная для хранения текущей модели
+current_model = "facebook/blenderbot-400M-distill"
+
+# Список доступных моделей для выбора
+AVAILABLE_MODELS = {
     "blenderbot": "facebook/blenderbot-400M-distill",
     "gpt2": "gpt2",
     "flan-t5": "google/flan-t5-base",
     "dialoGPT": "microsoft/DialoGPT-medium"
 }
 
-current_model = "facebook/blenderbot-400M-distill"
-
-HTML = '''
+# --- HTML ШАБЛОН (полностью отделен от Python) ---
+HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -25,16 +27,264 @@ HTML = '''
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MateusAI - Чат с ИИ</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
+        /* Стили полностью внутри HTML, никакого Python кода здесь нет */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
+            min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 20px;
+        }
+        .chat-container {
+            width: 100%; max-width: 800px; height: 90vh; background: white;
+            border-radius: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            display: flex; flex-direction: column; overflow: hidden;
+        }
+        .chat-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white; padding: 20px; text-align: center;
+        }
+        .chat-header h1 { font-size: 24px; margin-bottom: 5px; }
+        .chat-header p { font-size: 14px; opacity: 0.9; margin-bottom: 10px; }
+        .model-selector select {
+            padding: 8px 15px; border-radius: 20px; border: none;
+            background: rgba(255,255,255,0.2); color: white; font-size: 14px; cursor: pointer;
+        }
+        .model-selector select option { background: #764ba2; color: white; }
+        .chat-messages {
+            flex: 1; overflow-y: auto; padding: 20px; background: #f5f5f5;
+        }
+        .message { margin-bottom: 20px; display: flex; animation: fadeIn 0.3s ease; }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .user-message { justify-content: flex-end; }
+        .bot-message { justify-content: flex-start; }
+        .message-content {
+            max-width: 70%; padding: 12px 18px; border-radius: 20px;
+            font-size: 14px; line-height: 1.5; word-wrap: break-word;
+        }
+        .user-message .message-content {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white; border-bottom-right-radius: 5px;
+        }
+        .bot-message .message-content {
+            background: white; color: #333; border-bottom-left-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .message-time { font-size: 10px; margin-top: 5px; opacity: 0.6; text-align: right; }
+        .typing-indicator {
+            display: flex; padding: 12px 18px; background: white; border-radius: 20px;
+            border-bottom-left-radius: 5px; width: fit-content;
+        }
+        .typing-indicator span {
+            width: 8px; height: 8px; background: #999; border-radius: 50%;
+            margin: 0 2px; animation: typing 1.4s infinite;
+        }
+        .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+        .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes typing {
+            0%, 60%, 100% { transform: translateY(0); }
+            30% { transform: translateY(-10px); }
+        }
+        .chat-input {
+            padding: 20px; background: white; border-top: 1px solid #eee;
+            display: flex; gap: 10px;
+        }
+        .chat-input input {
+            flex: 1; padding: 12px 18px; border: 2px solid #eee; border-radius: 25px;
+            font-size: 14px; outline: none; transition: border-color 0.3s;
+        }
+        .chat-input input:focus { border-color: #667eea; }
+        .chat-input button {
+            padding: 12px 25px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white; border: none; border-radius: 25px; font-size: 14px; cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .chat-input button:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(102,126,234,0.4); }
+        .chat-input button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .badge {
+            display: inline-block; padding: 3px 8px; background: #4caf50;
+            color: white; border-radius: 12px; font-size: 11px; margin-left: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <h1>MateusAI <span class="badge">Hugging Face</span></h1>
+            <p>ИИ с доступом к разным моделям</p>
+            <div class="model-selector">
+                <select id="modelSelect" onchange="changeModel()">
+                    <option value="facebook/blenderbot-400M-distill">BlenderBot (лучший для чата)</option>
+                    <option value="gpt2">GPT-2 (текст)</option>
+                    <option value="google/flan-t5-base">FLAN-T5 (универсальный)</option>
+                    <option value="microsoft/DialoGPT-medium">DialoGPT (диалоги)</option>
+                </select>
+            </div>
+        </div>
+        <div class="chat-messages" id="messages">
+            <div class="message bot-message">
+                <div class="message-content">
+                    👋 Привет! Я MateusAI. Выбери модель и задавай вопросы!
+                    <div class="message-time">только что</div>
+                </div>
+            </div>
+        </div>
+        <div class="chat-input">
+            <input type="text" id="userInput" placeholder="Напиши сообщение..." onkeypress="if(event.key === 'Enter') sendMessage()">
+            <button onclick="sendMessage()" id="sendBtn">Отправить</button>
+        </div>
+    </div>
+
+    <script>
+        let isWaiting = false;
+
+        async function changeModel() {
+            const select = document.getElementById('modelSelect');
+            const model = select.value;
+            await fetch('/set_model', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({model: model})
+            });
+            addMessage(`✅ Модель изменена на ${select.options[select.selectedIndex].text}`, false);
+        }
+
+        function addMessage(text, isUser) {
+            const messagesDiv = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isUser ? 'user-message' : 'bot-message'}`;
+            const time = new Date().toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'});
+            messageDiv.innerHTML = `<div class="message-content">${text}<div class="message-time">${time}</div></div>`;
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function showTyping() {
+            const messagesDiv = document.getElementById('messages');
+            const typingDiv = document.createElement('div');
+            typingDiv.className = 'message bot-message';
+            typingDiv.id = 'typing';
+            typingDiv.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
+            messagesDiv.appendChild(typingDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function hideTyping() {
+            const typingDiv = document.getElementById('typing');
+            if (typingDiv) typingDiv.remove();
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('userInput');
+            const message = input.value.trim();
+            if (!message || isWaiting) return;
+
+            addMessage(message, true);
+            input.value = '';
+            showTyping();
+            isWaiting = true;
+            document.getElementById('sendBtn').disabled = true;
+
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({message: message})
+                });
+                const data = await response.json();
+                hideTyping();
+                addMessage(data.response, false);
+            } catch (error) {
+                hideTyping();
+                addMessage('❌ Ошибка. Попробуй ещё раз.', false);
+            } finally {
+                isWaiting = false;
+                document.getElementById('sendBtn').disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
+"""
+# --- КОНЕЦ HTML ШАБЛОНА ---
+
+@app.route('/')
+def home():
+    """Отображает главную страницу с чатом."""
+    return render_template_string(HTML_TEMPLATE)
+
+@app.route('/set_model', methods=['POST'])
+def set_model():
+    """Изменяет текущую модель."""
+    global current_model
+    data = request.json
+    new_model = data.get('model')
+    if new_model in AVAILABLE_MODELS.values():
+        current_model = new_model
+    return jsonify({"status": "ok", "model": current_model})
+
+@app.route('/chat', methods=['POST'])
+def chat():
+    """Обрабатывает сообщения пользователя и возвращает ответ от AI."""
+    global current_model
+    data = request.json
+    user_message = data.get('message', '')
+
+    if not user_message:
+        return jsonify({"response": "Напиши что-нибудь!"})
+
+    # Настройка payload в зависимости от модели
+    if 'blenderbot' in current_model:
+        # BlenderBot ожидает объект с полем 'text'
+        payload = {"inputs": {"text": user_message}}
+    elif 't5' in current_model:
+        # Для T5 лучше добавить префикс 'answer:'
+        payload = {"inputs": f"answer: {user_message}"}
+    else:
+        # Для GPT и DialoGPT подойдет простая строка
+        payload = {"inputs": user_message}
+
+    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+    api_url = f"https://api-inference.huggingface.co/models/{current_model}"
+
+    try:
+        response = requests.post(api_url, headers=headers, json=payload, timeout=30)
+        result = response.json()
+
+        # --- Универсальный парсер ответа от Hugging Face ---
+        ai_response = "Извини, не могу понять ответ модели."
+        if response.status_code == 200:
+            if isinstance(result, list) and len(result) > 0:
+                first_item = result[0]
+                if isinstance(first_item, dict):
+                    # Для BlenderBot: {'generated_text': {...}}
+                    if 'generated_text' in first_item:
+                        generated = first_item['generated_text']
+                        if isinstance(generated, dict) and 'text' in generated:
+                            ai_response = generated['text']  # Для BlenderBot
+                        elif isinstance(generated, str):
+                            ai_response = generated  # Для других моделей
+                elif isinstance(first_item, str):
+                    ai_response = first_item  # Для простых текстовых ответов
+            elif isinstance(result, dict) and 'generated_text' in result:
+                ai_response = result['generated_text']
+            elif isinstance(result, str):
+                ai_response = result
+        elif response.status_code == 503:
+            ai_response = "⏳ Модель загружается... Подожди 10 секунд и попробуй снова."
+        else:
+            ai_response = f"❌ Ошибка API: {response.status_code}"
+
+    except requests.exceptions.Timeout:
+        ai_response = "⏳ Превышено время ожидания. Модель может быть перегружена."
+    except Exception as e:
+        ai_response = f"❌ Ошибка: {str(e)}"
+
+    return jsonify({"response": ai_response})
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)            min-height: 100vh;
             display: flex;
             justify-content: center;
             align-items: center;
