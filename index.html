@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MateusAI – Чат с ИИ</title>
+    <!-- Подключаем marked.js для парсинга Markdown -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -31,14 +33,11 @@
             color: white;
             padding: 20px;
             text-align: center;
+            position: relative;
         }
         .chat-header h1 {
             font-size: 24px;
             margin-bottom: 5px;
-        }
-        .chat-header p {
-            font-size: 14px;
-            opacity: 0.9;
         }
         .badge {
             display: inline-block;
@@ -48,6 +47,21 @@
             border-radius: 12px;
             margin-left: 10px;
             vertical-align: middle;
+        }
+        .reset-btn {
+            position: absolute;
+            right: 20px;
+            top: 20px;
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: white;
+            padding: 5px 12px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .reset-btn:hover {
+            background: rgba(255,255,255,0.3);
         }
         .chat-messages {
             flex: 1;
@@ -88,6 +102,30 @@
             color: #333;
             border-bottom-left-radius: 5px;
             box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        /* Стили для Markdown внутри сообщений бота */
+        .bot-message .message-content pre {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 10px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            margin: 8px 0;
+        }
+        .bot-message .message-content code {
+            background: #eee;
+            padding: 2px 4px;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        .bot-message .message-content a {
+            color: #667eea;
+            text-decoration: none;
+        }
+        .bot-message .message-content a:hover {
+            text-decoration: underline;
         }
         .message-time {
             font-size: 10px;
@@ -158,12 +196,13 @@
     <div class="chat-container">
         <div class="chat-header">
             <h1>MateusAI <span class="badge">MateuKras</span></h1>
-            <p>Чат с искусственным интеллектом</p>
+            <p>Чат с памятью и форматированием</p>
+            <button class="reset-btn" onclick="resetChat()">Очистить историю</button>
         </div>
         <div class="chat-messages" id="messages">
             <div class="message bot-message">
                 <div class="message-content">
-                    👋 Привет! Я MateusAI. Задавай любые вопросы!
+                    👋 Привет! Я MateusAI. Я помню контекст беседы и поддерживаю <strong>жирный</strong>, <em>курсив</em>, <code>код</code> и <a href="#">ссылки</a>.
                     <div class="message-time">только что</div>
                 </div>
             </div>
@@ -177,14 +216,37 @@
     <script>
         let isWaiting = false;
 
+        // Функция для рендеринга Markdown в HTML
+        function renderMarkdown(text) {
+            if (!text) return '';
+            // Используем marked.js с настройками безопасности (не экранируем ссылки)
+            return marked.parse(text);
+        }
+
         function addMessage(text, isUser) {
             const messagesDiv = document.getElementById('messages');
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${isUser ? 'user-message' : 'bot-message'}`;
             const time = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-            messageDiv.innerHTML = `<div class="message-content">${text}<div class="message-time">${time}</div></div>`;
+
+            let contentHtml;
+            if (isUser) {
+                // Сообщения пользователя выводим как обычный текст (без Markdown)
+                contentHtml = `<div class="message-content">${escapeHtml(text)}<div class="message-time">${time}</div></div>`;
+            } else {
+                // Сообщения бота рендерим через Markdown
+                contentHtml = `<div class="message-content">${renderMarkdown(text)}<div class="message-time">${time}</div></div>`;
+            }
+            messageDiv.innerHTML = contentHtml;
             messagesDiv.appendChild(messageDiv);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        // Простая функция для экранирования HTML (чтобы не ломать разметку)
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
 
         function showTyping() {
@@ -229,6 +291,25 @@
             } finally {
                 isWaiting = false;
                 document.getElementById('sendBtn').disabled = false;
+            }
+        }
+
+        async function resetChat() {
+            if (!confirm('Очистить всю историю диалога?')) return;
+            try {
+                await fetch('/reset', { method: 'POST' });
+                // Очищаем сообщения на странице
+                const messagesDiv = document.getElementById('messages');
+                messagesDiv.innerHTML = `
+                    <div class="message bot-message">
+                        <div class="message-content">
+                            👋 История очищена. Начинаем новый диалог!
+                            <div class="message-time">только что</div>
+                        </div>
+                    </div>
+                `;
+            } catch (error) {
+                alert('Не удалось очистить историю');
             }
         }
     </script>
