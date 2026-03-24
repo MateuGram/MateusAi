@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MateusAI - Чат с ИИ</title>
+    <title>MateusAI – Чат с ИИ</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -40,19 +40,14 @@
             font-size: 14px;
             opacity: 0.9;
         }
-        .model-selector {
-            padding: 10px;
-            background: #f5f5f5;
-            border-bottom: 1px solid #eee;
-        }
-        .model-selector select {
-            width: 100%;
-            padding: 10px;
-            border: 2px solid #ddd;
-            border-radius: 10px;
-            font-size: 14px;
-            outline: none;
-            background: white;
+        .badge {
+            display: inline-block;
+            background: #ff9800;
+            font-size: 12px;
+            padding: 2px 8px;
+            border-radius: 12px;
+            margin-left: 10px;
+            vertical-align: middle;
         }
         .chat-messages {
             flex: 1;
@@ -105,7 +100,6 @@
             padding: 12px 18px;
             background: white;
             border-radius: 20px;
-            border-bottom-left-radius: 5px;
             width: fit-content;
         }
         .typing-indicator span {
@@ -154,44 +148,28 @@
         .chat-input button:hover {
             transform: translateY(-2px);
         }
-        .badge {
-            display: inline-block;
-            padding: 3px 8px;
-            background: #ff9800;
-            color: white;
-            border-radius: 12px;
-            font-size: 11px;
-            margin-left: 10px;
+        .chat-input button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
         }
     </style>
 </head>
 <body>
     <div class="chat-container">
         <div class="chat-header">
-            <h1>MateusAI <span class="badge">Hugging Face</span></h1>
-            <p>Рабочие модели без ошибок 410</p>
+            <h1>MateusAI <span class="badge">MateuKras</span></h1>
+            <p>Чат с искусственным интеллектом</p>
         </div>
-        
-        <div class="model-selector">
-            <select id="modelSelect" onchange="changeModel()">
-                <option value="HuggingFaceH4/zephyr-7b-beta">Zephyr (лучший для чата)</option>
-                <option value="microsoft/phi-2">Phi-2 (Microsoft)</option>
-                <option value="google/flan-t5-large">FLAN-T5 Large</option>
-                <option value="EleutherAI/gpt-neo-125M">GPT-Neo (быстрый)</option>
-            </select>
-        </div>
-        
         <div class="chat-messages" id="messages">
             <div class="message bot-message">
                 <div class="message-content">
-                    👋 Привет! Я MateusAI. Выбери модель и задавай вопросы!
+                    👋 Привет! Я MateusAI. Задавай любые вопросы!
                     <div class="message-time">только что</div>
                 </div>
             </div>
         </div>
-        
         <div class="chat-input">
-            <input type="text" id="userInput" placeholder="Напиши сообщение..." onkeypress="if(event.key === 'Enter') sendMessage()">
+            <input type="text" id="userInput" placeholder="Напиши сообщение..." onkeypress="if(event.key==='Enter') sendMessage()">
             <button onclick="sendMessage()" id="sendBtn">Отправить</button>
         </div>
     </div>
@@ -199,48 +177,23 @@
     <script>
         let isWaiting = false;
 
-        async function changeModel() {
-            const select = document.getElementById('modelSelect');
-            const model = select.value;
-            const modelName = select.options[select.selectedIndex].text;
-            
-            const response = await fetch('/set_model', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({model: model})
-            });
-            
-            addMessage(`✅ Модель изменена на ${modelName}`, false);
-        }
-
         function addMessage(text, isUser) {
             const messagesDiv = document.getElementById('messages');
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${isUser ? 'user-message' : 'bot-message'}`;
-            
-            const time = new Date().toLocaleTimeString('ru-RU', {
-                hour: '2-digit',
-                minute: '2-digit'
-            });
-            
-            messageDiv.innerHTML = `
-                <div class="message-content">
-                    ${text}
-                    <div class="message-time">${time}</div>
-                </div>
-            `;
-            
+            const time = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+            messageDiv.innerHTML = `<div class="message-content">${text}<div class="message-time">${time}</div></div>`;
             messagesDiv.appendChild(messageDiv);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
 
         function showTyping() {
             const messagesDiv = document.getElementById('messages');
-            const typingDiv = document.createElement('div');
-            typingDiv.className = 'message bot-message';
-            typingDiv.id = 'typing';
-            typingDiv.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
-            messagesDiv.appendChild(typingDiv);
+            const div = document.createElement('div');
+            div.className = 'message bot-message';
+            div.id = 'typing';
+            div.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
+            messagesDiv.appendChild(div);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
 
@@ -256,7 +209,7 @@
 
             addMessage(message, true);
             input.value = '';
-            
+
             showTyping();
             isWaiting = true;
             document.getElementById('sendBtn').disabled = true;
@@ -264,17 +217,15 @@
             try {
                 const response = await fetch('/chat', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({message: message})
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: message })
                 });
-                
                 const data = await response.json();
                 hideTyping();
                 addMessage(data.response, false);
-                
             } catch (error) {
                 hideTyping();
-                addMessage('❌ Ошибка. Попробуй ещё раз.', false);
+                addMessage('❌ Ошибка соединения. Попробуй ещё раз.', false);
             } finally {
                 isWaiting = false;
                 document.getElementById('sendBtn').disabled = false;
