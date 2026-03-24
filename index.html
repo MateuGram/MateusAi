@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MateusAI – Чат с ИИ</title>
+    <!-- Подключаем highlight.js (тёмная тема) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <!-- Подключаем marked.js для парсинга Markdown -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
@@ -35,10 +38,7 @@
             text-align: center;
             position: relative;
         }
-        .chat-header h1 {
-            font-size: 24px;
-            margin-bottom: 5px;
-        }
+        .chat-header h1 { font-size: 24px; margin-bottom: 5px; }
         .badge {
             display: inline-block;
             background: #ff9800;
@@ -60,9 +60,7 @@
             cursor: pointer;
             font-size: 12px;
         }
-        .reset-btn:hover {
-            background: rgba(255,255,255,0.3);
-        }
+        .reset-btn:hover { background: rgba(255,255,255,0.3); }
         .chat-messages {
             flex: 1;
             overflow-y: auto;
@@ -78,12 +76,8 @@
             from { opacity: 0; transform: translateY(10px); }
             to { opacity: 1; transform: translateY(0); }
         }
-        .user-message {
-            justify-content: flex-end;
-        }
-        .bot-message {
-            justify-content: flex-start;
-        }
+        .user-message { justify-content: flex-end; }
+        .bot-message { justify-content: flex-start; }
         .message-content {
             max-width: 70%;
             padding: 12px 18px;
@@ -103,22 +97,58 @@
             border-bottom-left-radius: 5px;
             box-shadow: 0 2px 5px rgba(0,0,0,0.1);
         }
-        /* Стили для Markdown внутри сообщений бота */
+        /* Стили для блоков кода */
         .bot-message .message-content pre {
-            background: #2d2d2d;
-            color: #f8f8f2;
-            padding: 10px;
+            position: relative;
+            background: #282c34;
             border-radius: 8px;
+            padding: 12px;
+            margin: 12px 0;
             overflow-x: auto;
-            font-family: 'Courier New', monospace;
-            font-size: 12px;
-            margin: 8px 0;
         }
-        .bot-message .message-content code {
+        .bot-message .message-content pre code {
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            color: #abb2bf;
+            background: transparent;
+            padding: 0;
+            white-space: pre;
+        }
+        .code-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #21252b;
+            padding: 6px 12px;
+            border-radius: 8px 8px 0 0;
+            margin-top: 12px;
+            font-size: 12px;
+            color: #9da5b4;
+        }
+        .code-lang {
+            font-weight: bold;
+            text-transform: lowercase;
+        }
+        .copy-btn {
+            background: #3e4451;
+            border: none;
+            color: #abb2bf;
+            padding: 2px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+            transition: background 0.2s;
+        }
+        .copy-btn:hover {
+            background: #528bff;
+            color: white;
+        }
+        .bot-message .message-content p code {
             background: #eee;
             padding: 2px 4px;
             border-radius: 4px;
             font-family: monospace;
+            font-size: 13px;
         }
         .bot-message .message-content a {
             color: #667eea;
@@ -170,9 +200,7 @@
             outline: none;
             transition: border-color 0.3s;
         }
-        .chat-input input:focus {
-            border-color: #667eea;
-        }
+        .chat-input input:focus { border-color: #667eea; }
         .chat-input button {
             padding: 12px 25px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -183,9 +211,7 @@
             cursor: pointer;
             transition: transform 0.2s;
         }
-        .chat-input button:hover {
-            transform: translateY(-2px);
-        }
+        .chat-input button:hover { transform: translateY(-2px); }
         .chat-input button:disabled {
             opacity: 0.6;
             cursor: not-allowed;
@@ -195,14 +221,14 @@
 <body>
     <div class="chat-container">
         <div class="chat-header">
-            <h1>MateusAI <span class="badge">MateuKras</span></h1>
-            <p>Чат с памятью и форматированием</p>
+            <h1>MateusAI <span class="badge">От MateuKras`а</span></h1>
+            <p>Чат с памятью и форматированием кода</p>
             <button class="reset-btn" onclick="resetChat()">Очистить историю</button>
         </div>
         <div class="chat-messages" id="messages">
             <div class="message bot-message">
                 <div class="message-content">
-                    👋 Привет! Я MateusAI. Я помню контекст беседы и поддерживаю <strong>жирный</strong>, <em>курсив</em>, <code>код</code> и <a href="#">ссылки</a>.
+                    👋 Привет! Я MateusAI. Я поддерживаю <strong>жирный</strong>, <em>курсив</em>, <code>код</code>.
                     <div class="message-time">только что</div>
                 </div>
             </div>
@@ -216,12 +242,40 @@
     <script>
         let isWaiting = false;
 
-        // Функция для рендеринга Markdown в HTML
+        // Функция для рендеринга Markdown с обработкой блоков кода
         function renderMarkdown(text) {
             if (!text) return '';
-            // Используем marked.js с настройками безопасности (не экранируем ссылки)
+
+            // Настраиваем marked для использования highlight.js
+            const renderer = new marked.Renderer();
+            renderer.code = function(code, language) {
+                // Определяем язык (если не указан, пытаемся угадать)
+                const lang = (language || 'plaintext').toLowerCase();
+                // Подсвечиваем код через highlight.js
+                const highlighted = hljs.highlight(code, { language: lang }).value;
+                return `
+                    <div class="code-header">
+                        <span class="code-lang">${lang}</span>
+                        <button class="copy-btn" onclick="copyCode(this)">Копировать</button>
+                    </div>
+                    <pre><code class="hljs ${lang}">${highlighted}</code></pre>
+                `;
+            };
+            // Ставим опции
+            marked.setOptions({ renderer });
             return marked.parse(text);
         }
+
+        // Функция копирования кода
+        window.copyCode = function(btn) {
+            const pre = btn.closest('pre');
+            const code = pre.querySelector('code');
+            const text = code.textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                btn.textContent = 'Скопировано!';
+                setTimeout(() => btn.textContent = 'Копировать', 2000);
+            }).catch(() => alert('Не удалось скопировать'));
+        };
 
         function addMessage(text, isUser) {
             const messagesDiv = document.getElementById('messages');
@@ -231,10 +285,8 @@
 
             let contentHtml;
             if (isUser) {
-                // Сообщения пользователя выводим как обычный текст (без Markdown)
                 contentHtml = `<div class="message-content">${escapeHtml(text)}<div class="message-time">${time}</div></div>`;
             } else {
-                // Сообщения бота рендерим через Markdown
                 contentHtml = `<div class="message-content">${renderMarkdown(text)}<div class="message-time">${time}</div></div>`;
             }
             messageDiv.innerHTML = contentHtml;
@@ -242,7 +294,6 @@
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
 
-        // Простая функция для экранирования HTML (чтобы не ломать разметку)
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
@@ -298,7 +349,6 @@
             if (!confirm('Очистить всю историю диалога?')) return;
             try {
                 await fetch('/reset', { method: 'POST' });
-                // Очищаем сообщения на странице
                 const messagesDiv = document.getElementById('messages');
                 messagesDiv.innerHTML = `
                     <div class="message bot-message">
