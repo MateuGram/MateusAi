@@ -8,6 +8,11 @@ app.secret_key = os.urandom(24)  # для сессий
 MISTRAL_API_KEY = "V8Ad82ZW8R5lF3qNkmSTQTkoC06FYiyh"
 MODEL = "mistral-tiny"
 
+system_message = {
+    "role": "system",
+    "content": "Ты — Mateus AI, дружелюбный и умный помощник. Отвечай на русском языке, поддерживай контекст диалога. Используй Markdown для форматирования: жирный, курсив, блоки кода, ссылки."
+}
+
 # Читаем HTML
 try:
     with open('index.html', 'r', encoding='utf-8') as f:
