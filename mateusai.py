@@ -27,11 +27,12 @@ def chat():
     if not user_message:
         return jsonify({"response": "Напиши что-нибудь!"})
 
+    # История диалога
     if 'history' not in session:
         session['history'] = []
     history = session['history']
     history.append({"role": "user", "content": user_message})
-    history = history[-20:]
+    history = history[-20:]  # храним последние 20 сообщений
 
     # Системный промпт
     system_prompt = (
@@ -54,10 +55,10 @@ def chat():
                 "model": MODEL,
                 "messages": messages,
                 "temperature": 0.7,
-                "max_tokens": 800,
-                "timeout": 45
+                "max_tokens": 800
+                # timeout НЕ должен быть здесь
             },
-            timeout=45
+            timeout=45  # правильно: таймаут для всего запроса
         )
 
         if response.status_code == 200:
@@ -66,13 +67,16 @@ def chat():
             history.append({"role": "assistant", "content": ai_response})
             session['history'] = history
         else:
-            ai_response = f"❌ Ошибка API: {response.status_code}"
+            # Детали ошибки в лог
+            error_detail = ""
             try:
-                detail = response.json()
-                if 'error' in detail:
-                    ai_response += f" – {detail['error']}"
+                error_json = response.json()
+                error_detail = f" – {error_json.get('error', {}).get('message', '')}"
             except:
                 pass
+            ai_response = f"❌ Ошибка API: {response.status_code}{error_detail}"
+            print(f"API error: {response.status_code} – {response.text}")
+
     except requests.exceptions.Timeout:
         ai_response = "⏳ Превышено время ожидания. Попробуй ещё раз."
     except Exception as e:
