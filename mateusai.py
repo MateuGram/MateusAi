@@ -1,4 +1,5 @@
 import os
+import time
 import requests
 from flask import Flask, request, jsonify, render_template_string, session
 
@@ -6,7 +7,9 @@ app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
 MISTRAL_API_KEY = "V8Ad82ZW8R5lF3qNkmSTQTkoC06FYiyh"
-MODEL = "mistral-tiny"          # или "mistral-small-latest"
+MODEL = "mistral-small-latest"   # более быстрая модель
+TIMEOUT = 60                     # увеличенный таймаут
+RETRIES = 1                      # количество повторных попыток
 
 try:
     with open('index.html', 'r', encoding='utf-8') as f:
@@ -44,43 +47,59 @@ def chat():
     )
     messages = [{"role": "system", "content": system_prompt}] + history
 
-    try:
-        response = requests.post(
-            "https://api.mistral.ai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {MISTRAL_API_KEY}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": MODEL,
-                "messages": messages,
-                "temperature": 0.7,
-                "max_tokens": 800
-                # timeout НЕ должен быть здесь
-            },
-            timeout=45  # правильно: таймаут для всего запроса
-        )
+    # Пытаемся отправить запрос с повторными попытками при таймауте
+    ai_response = None
+    for attempt in range(RETRIES + 1):
+        try:
+            response = requests.post(
+                "https://api.mistral.ai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {MISTRAL_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": MODEL,
+                    "messages": messages,
+                    "temperature": 0.7,
+                    "max_tokens": 800
+                },
+                timeout=TIMEOUT
+            )
 
-        if response.status_code == 200:
-            result = response.json()
-            ai_response = result['choices'][0]['message']['content']
-            history.append({"role": "assistant", "content": ai_response})
-            session['history'] = history
-        else:
-            # Детали ошибки в лог
-            error_detail = ""
-            try:
-                error_json = response.json()
-                error_detail = f" – {error_json.get('error', {}).get('message', '')}"
-            except:
-                pass
-            ai_response = f"❌ Ошибка API: {response.status_code}{error_detail}"
-            print(f"API error: {response.status_code} – {response.text}")
+            if response.status_code == 200:
+                result = response.json()
+                ai_response = result['choices'][0]['message']['content']
+                break
+            else:
+                # Логируем ошибку
+                error_detail = ""
+                try:
+                    error_json = response.json()
+                    error_detail = f" – {error_json.get('error', {}).get('message', '')}"
+                except:
+                    pass
+                ai_response = f"❌ Ошибка API: {response.status_code}{error_detail}"
+                print(f"API error: {response.status_code} – {response.text}")
+                break   # не повторяем при ошибке 4xx, только при таймауте
 
-    except requests.exceptions.Timeout:
-        ai_response = "⏳ Превышено время ожидания. Попробуй ещё раз."
-    except Exception as e:
-        ai_response = f"❌ Ошибка: {str(e)}"
+        except requests.exceptions.Timeout:
+            print(f"⏳ Таймаут, попытка {attempt+1} из {RETRIES+1}")
+            if attempt == RETRIES:
+                ai_response = "⏳ Превышено время ожидания. Попробуй ещё раз."
+            else:
+                time.sleep(2)  # пауза перед повторной попыткой
+                continue
+        except Exception as e:
+            ai_response = f"❌ Ошибка: {str(e)}"
+            print(f"Exception: {e}")
+            break
+
+    if ai_response is None:
+        ai_response = "❌ Не удалось получить ответ"
+
+    # Сохраняем ответ в историю
+    history.append({"role": "assistant", "content": ai_response})
+    session['history'] = history
 
     return jsonify({"response": ai_response})
 
