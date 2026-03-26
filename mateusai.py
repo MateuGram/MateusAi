@@ -1,57 +1,62 @@
 import os
-import time
+import json
 import requests
-from flask import Flask, request, jsonify, render_template_string, session
+from flask import Flask, request, Response, render_template_string, session
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
 MISTRAL_API_KEY = "V8Ad82ZW8R5lF3qNkmSTQTkoC06FYiyh"
-MODEL = "mistral-small-latest"   # более быстрая модель
-TIMEOUT = 1000                     # увеличенный таймаут
-RETRIES = 1                      # количество повторных попыток
+MODEL = "mistral-small-latest"
 
+# Загружаем HTML
 try:
     with open('index.html', 'r', encoding='utf-8') as f:
         HTML_TEMPLATE = f.read()
-    print("✅ index.html loaded")
-except Exception as e:
-    print(f"❌ Error loading index.html: {e}")
-    HTML_TEMPLATE = "<h1>Error loading HTML</h1>"
+except:
+    HTML_TEMPLATE = "<h1>Ошибка загрузки HTML</h1>"
 
 @app.route('/')
 def home():
     return render_template_string(HTML_TEMPLATE)
 
-@app.route('/chat', methods=['POST'])
-def chat():
+@app.route('/chat-stream', methods=['POST'])
+def chat_stream():
+    """Потоковый чат с Mistral через Server-Sent Events"""
     data = request.json
     user_message = data.get('message', '')
     if not user_message:
-        return jsonify({"response": "Напиши что-нибудь!"})
+        return "No message", 400
 
-    # История диалога
+    # Получаем историю сессии (опционально, можно хранить и здесь)
     if 'history' not in session:
         session['history'] = []
     history = session['history']
     history.append({"role": "user", "content": user_message})
-    history = history[-20:]  # храним последние 20 сообщений
+    # Оставляем последние 20
+    history = history[-20:]
+    session['history'] = history
 
-    # Системный промпт
+    # Системный промпт с просьбой объяснять ход мыслей
     system_prompt = (
         "Ты — MateusAI, дружелюбный и полезный ассистент. "
-        "Отвечай на русском языке. Используй Markdown для форматирования: "
-        "жирный, курсив, блоки кода с указанием языка программирования, ссылки. "
-        "Если просят написать код — оформляй его в тройные бэктики с указанием языка. "
+        "Отвечай на русском языке. Используй Markdown для форматирования. "
+        "Когда даёшь код, объясняй, что ты делаешь, показывай ход мыслей по шагам. "
+        "Если просят написать код — пиши его с указанием языка. "
         "Будь вежливым и помогай пользователю."
     )
+
+    # Собираем сообщения
     messages = [{"role": "system", "content": system_prompt}] + history
 
-    # Пытаемся отправить запрос с повторными попытками при таймауте
-    ai_response = None
-    for attempt in range(RETRIES + 1):
+    # Функция-генератор для SSE
+    def generate():
+        # Отправляем начало стрима
+        yield f"data: {json.dumps({'type': 'start'})}\n\n"
+
         try:
-            response = requests.post(
+            # Открываем потоковое соединение с Mistral
+            with requests.post(
                 "https://api.mistral.ai/v1/chat/completions",
                 headers={
                     "Authorization": f"Bearer {MISTRAL_API_KEY}",
@@ -61,52 +66,55 @@ def chat():
                     "model": MODEL,
                     "messages": messages,
                     "temperature": 0.7,
-                    "max_tokens": 800
+                    "max_tokens": 800,
+                    "stream": True   # включаем стриминг
                 },
-                timeout=TIMEOUT
-            )
+                stream=True,
+                timeout=120
+            ) as response:
+                if response.status_code != 200:
+                    error_msg = f"❌ Ошибка API: {response.status_code}"
+                    yield f"data: {json.dumps({'type': 'error', 'content': error_msg})}\n\n"
+                    return
 
-            if response.status_code == 200:
-                result = response.json()
-                ai_response = result['choices'][0]['message']['content']
-                break
-            else:
-                # Логируем ошибку
-                error_detail = ""
-                try:
-                    error_json = response.json()
-                    error_detail = f" – {error_json.get('error', {}).get('message', '')}"
-                except:
-                    pass
-                ai_response = f"❌ Ошибка API: {response.status_code}{error_detail}"
-                print(f"API error: {response.status_code} – {response.text}")
-                break   # не повторяем при ошибке 4xx, только при таймауте
+                # Читаем поток построчно
+                full_content = ""
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    # Убираем "data: " в начале
+                    line_str = line.decode('utf-8')
+                    if line_str.startswith("data: "):
+                        line_str = line_str[6:]
+                    if line_str == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(line_str)
+                        # Извлекаем токен
+                        delta = chunk['choices'][0]['delta']
+                        if 'content' in delta:
+                            token = delta['content']
+                            full_content += token
+                            # Отправляем токен клиенту
+                            yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
+                    except Exception as e:
+                        print("Ошибка парсинга чанка:", e)
 
-        except requests.exceptions.Timeout:
-            print(f"⏳ Таймаут, попытка {attempt+1} из {RETRIES+1}")
-            if attempt == RETRIES:
-                ai_response = "⏳ Превышено время ожидания. Попробуй ещё раз."
-            else:
-                time.sleep(2)  # пауза перед повторной попыткой
-                continue
+                # Сохраняем полный ответ в историю
+                history.append({"role": "assistant", "content": full_content})
+                session['history'] = history
+
+                yield f"data: {json.dumps({'type': 'end'})}\n\n"
+
         except Exception as e:
-            ai_response = f"❌ Ошибка: {str(e)}"
-            print(f"Exception: {e}")
-            break
+            yield f"data: {json.dumps({'type': 'error', 'content': f'Ошибка: {str(e)}'})}\n\n"
 
-    if ai_response is None:
-        ai_response = "❌ Не удалось получить ответ"
-
-    # Сохраняем ответ в историю
-    history.append({"role": "assistant", "content": ai_response})
-    session['history'] = history
-
-    return jsonify({"response": ai_response})
+    return Response(generate(), mimetype="text/event-stream")
 
 @app.route('/reset', methods=['POST'])
 def reset():
     session.pop('history', None)
-    return jsonify({"status": "ok"})
+    return {"status": "ok"}
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
