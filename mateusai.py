@@ -8,7 +8,7 @@ app.secret_key = os.urandom(24)
 
 MISTRAL_API_KEY = "V8Ad82ZW8R5lF3qNkmSTQTkoC06FYiyh"
 MODEL = "mistral-small-latest"   # более быстрая модель
-TIMEOUT = 60                     # увеличенный таймаут
+TIMEOUT = 1000                     # увеличенный таймаут
 RETRIES = 1                      # количество повторных попыток
 
 try:
